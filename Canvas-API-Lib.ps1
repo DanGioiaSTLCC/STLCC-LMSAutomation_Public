@@ -30,8 +30,9 @@ sis_user_id
 #>
 
 Add-Type -AssemblyName System.Web
+# not sure if PowerShell or Windows issue but not setting TLS 1.2 can cause issues randomly so I always set it
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-$global:CanvasSite = "school.beta.instructure.com"
+$global:CanvasSite = "stlcc.beta.instructure.com"
 
 #. $PSScriptRoot\Invoke-GraphQLQuery.ps1
 
@@ -91,8 +92,8 @@ function Send-CanvasUpdate {
         [Parameter(Mandatory=$true)]
         [string]$CanvasApiUrl,
 
-        [Parameter(Mandatory=$true)]
-        [string]$RequestBody,
+        [Parameter(Mandatory=$false)]
+        [string]$RequestBody="",
 
         [Parameter(Mandatory=$false)]
         [string]$ApiVerb="POST",
@@ -101,7 +102,13 @@ function Send-CanvasUpdate {
         [string]$TokenFilePath
     )
     $TokenString = Get-CanvasTokenString $TokenFilePath
-    $result = Invoke-RestMethod -Method $ApiVerb -Headers @{"Authorization"="Bearer $TokenString"} -Uri $CanvasApiUrl -Body $RequestBody -ContentType "application/json"
+    if ($RequestBody -eq ""){
+        $result = Invoke-RestMethod -Method $ApiVerb -Headers @{"Authorization"="Bearer $TokenString"} -Uri $CanvasApiUrl
+    }
+    else {
+        $result = Invoke-RestMethod -Method $ApiVerb -Headers @{"Authorization"="Bearer $TokenString"} -Uri $CanvasApiUrl -Body $RequestBody -ContentType "application/json"
+    }
+    
     # clear token data
     $TokenString = $null
     Remove-Variable -Name "TokenString"
@@ -474,7 +481,7 @@ function New-CanvasCourse {
         [string]$SelfEnroll = $false,
         
         [Parameter(Mandatory=$false)]
-        [string]$CourseFormat = "online",
+        [string]$CourseFormat = "",
 
         [Parameter(Mandatory=$false)]
         [string]$PublishImmediately = $false,
@@ -492,14 +499,14 @@ function New-CanvasCourse {
     # use default term if empty specification
     if ($TermId -eq ""){$TermId = "default"}
     $Course = @{
-        "name" = $CourseNameLong
-        "course_code" = $CourseNameShort
-        "term_id" = "sis_term_id:{0}" -f $TermId
-        "sis_course_id" = $CourseRef
-        "course_format" = $CourseFormat
-        "offer" = $PublishImmediately.ToString()
+        name = $CourseNameLong
+        course_code = $CourseNameShort
+        term_id = "sis_term_id:{0}" -f $TermId
+        sis_course_id = $CourseRef
+        offer = $PublishImmediately.ToString()
     }
     if ($SelfEnroll){$Course.Add("self_enrollment","true")}
+    if ($CourseFormat -ne ""){$Course.Add("course_format" ,$CourseFormat)}
     $CourseBody = @{"course"= $Course}
     $CourseBodyParts = ConvertTo-Json $CourseBody
     $NewCourse = Send-CanvasUpdate -CanvasApiUrl $CourseUrl -RequestBody $CourseBodyParts -TokenFilePath $TokenFilePath
@@ -862,9 +869,9 @@ function New-InstructorSandbox {
         "CourseNameLong"     = $CourseName.Trim()
         "CourseNameShort"    = $CourseNameShort
         "CourseRef"          = $CourseId
-        "TermId"             = "TrainingTermId"
+        "TermId"             = "stlcctrn"
         "PublishImmediately" = $false
-        "CourseAccount"      = "PracticeSubaccountId"
+        "CourseAccount"      = "prac"
         "TokenFilePath"      = $TokenFilePath
     }
     $NewCourseResult = New-CanvasCourse @CourseParams
@@ -931,12 +938,13 @@ function New-DeveloperCourseShell {
     $IdSuffix = $CourseSuffix.Replace(" ","_")
     $CourseId = "DEV-" + $InstructorUsername + $IdSuffix
     $CourseParams = @{
-        "CourseNameLong"     = $CourseName.Trim()
-        "CourseNameShort"    = $CourseNameShort
-        "CourseRef"          = $CourseId
-        "TermId"             = "default"
-        "PublishImmediately" = $false
-        "TokenFilePath"      = $TokenFilePath
+        CourseNameLong      = $CourseName.Trim()
+        CourseNameShort     = $CourseNameShort
+        CourseRef           = $CourseId
+        TermId              = "default"
+        CourseAccount       = "stlccdev"
+        PublishImmediately  = $false
+        TokenFilePath       = $TokenFilePath
     }
     $NewCourseResult = New-CanvasCourse @CourseParams
     $NewCourseId = $NewCourseResult.id
@@ -1045,7 +1053,6 @@ function Invoke-CanvasCourseContentReset {
         [string]$TokenFilePath
     )
     [string]$CourseResetUrl = "https://{0}/api/v1/courses/{1}/reset_content" -f $global:CanvasSite,$CourseId   
-    #Send-CanvasUpdate -CanvasApiUrl $CourseResetUrl -ApiVerb "POST" -RequestBody " " -TokenFilePath $TokenFilePath
     $TokenString = Get-CanvasTokenString $TokenFilePath
     $result = Invoke-RestMethod -Method POST -Headers @{"Authorization"="Bearer $TokenString"} -Uri $CourseResetUrl
     # clear token data
@@ -1711,4 +1718,34 @@ function Start-CanvasSisJobMonitor {
     )
     $SisJobMonResult = Invoke-CanvasSisMonitor -SisJobId $SisJobId -TokenFilePath $TokenFilePath -MaxIterations $MaxIterations
     return $SisJobMonResult
+}
+
+function Set-CanvasCourseTeamsClassEnabled {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$CourseId
+
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    #api/v1/courses/:course_id/external_tools
+    $CourseToolUrl = "https://{0}/api/v1/courses/{1}/external_tools" -f $global:CanvasSite,$CourseId
+    $UpdateBody = @{client_id = "170000000000570"}|ConvertTo-Json
+    Send-CanvasUpdate -CanvasApiUrl $CourseToolUrl -RequestBody $UpdateBody -ApiVerb "POST" -TokenFilePath $TokenFilePath
+}
+
+function Set-CanvasCourseTeamsMeetingsEnabled {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$CourseId
+
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    #api/v1/courses/:course_id/external_tools
+    $CourseToolUrl = "https://{0}/api/v1/courses/{1}/external_tools" -f $global:CanvasSite,$CourseId
+    $UpdateBody = @{client_id = "170000000000703"}|ConvertTo-Json
+    Send-CanvasUpdate -CanvasApiUrl $CourseToolUrl -RequestBody $UpdateBody -ApiVerb "POST" -TokenFilePath $TokenFilePath
 }
