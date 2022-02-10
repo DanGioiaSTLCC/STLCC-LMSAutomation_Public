@@ -32,7 +32,7 @@ sis_user_id
 Add-Type -AssemblyName System.Web
 # not sure if PowerShell or Windows issue but not setting TLS 1.2 can cause issues randomly so I always set it
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-$global:CanvasSite = "stlcc.beta.instructure.com"
+$global:CanvasSite = "school.beta.instructure.com"
 
 #. $PSScriptRoot\Invoke-GraphQLQuery.ps1
 
@@ -869,7 +869,7 @@ function New-InstructorSandbox {
         "CourseNameLong"     = $CourseName.Trim()
         "CourseNameShort"    = $CourseNameShort
         "CourseRef"          = $CourseId
-        "TermId"             = "stlcctrn"
+        "TermId"             = "trn"
         "PublishImmediately" = $false
         "CourseAccount"      = "prac"
         "TokenFilePath"      = $TokenFilePath
@@ -942,7 +942,7 @@ function New-DeveloperCourseShell {
         CourseNameShort     = $CourseNameShort
         CourseRef           = $CourseId
         TermId              = "default"
-        CourseAccount       = "stlccdev"
+        CourseAccount       = "dev"
         PublishImmediately  = $false
         TokenFilePath       = $TokenFilePath
     }
