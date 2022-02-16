@@ -420,6 +420,33 @@ function New-CanvasUser {
     return $UserCreationResult
 }
 
+function Update-CanvasUserEmail {
+    <#
+    .synopsis
+    Create basic user in Canvas
+    .Parameter UserId
+    user identifier used in Canvas (for username use sis_login_id:)
+    .Parameter EmailAddress
+    email address for user.  this is a required field.  anyone expecting to use a M365 resource must be set to institution email
+    .Parameter TokenFilePath
+    path of the file containing the token text stored as a secure string
+    #>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$UserId,
+
+        [Parameter(Mandatory=$true)]
+        [string]$EmailAddress,
+
+        [Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # craft user object parts
+    $userParts = @{user = @{ email = $EmailAddress}} | ConvertTo-Json
+    $UserUrl = "https://{0}/api/v1/users/{1}" -f $global:CanvasSite,$UserId
+    Send-CanvasUpdate -CanvasApiUrl $UserUrl -RequestBody $userParts -ApiVerb "PUT" -TokenFilePath $TokenFilePath
+}
 function Get-CanvasCourse {
     [CmdletBinding()]
     param (
@@ -608,8 +635,8 @@ function Get-CanvasUserMemberships {
     $CourseUsersUrl = "https://{0}/api/v1/users/{1}/enrollments" -f $global:CanvasSite,$CanvasUser
     # construct the parameters
     $MembershipListParams = @{
-        "CanvasApiUrl" = $CourseUsersUrl
-        "TokenFilePath" = $TokenFilePath
+        CanvasApiUrl = $CourseUsersUrl
+        TokenFilePath = $TokenFilePath
     }
     # call the requestor
     Get-CanvasItemList @MembershipListParams    
@@ -858,45 +885,55 @@ function New-InstructorSandbox {
         
     # retrieve user info
     $UserData = Get-CanvasUserByLogin $InstructorUsername -TokenFilePath $TokenFilePath
-    
-    # Build course details    
-    if ($CourseSuffix -ne ""){$CourseSuffix = " " + $CourseSuffix.Replace(" ","")}
-    $CourseName = "Practice Course {0} {1}" -f $UserData.short_name,$CourseSuffix
-    $CourseNameShort = "Practice {0}" -f $InstructorUsername
-    $IdSuffix = $CourseSuffix.Replace(" ","_")
-    $CourseId = "PRA_" + $InstructorUsername + $IdSuffix
-    $CourseParams = @{
-        "CourseNameLong"     = $CourseName.Trim()
-        "CourseNameShort"    = $CourseNameShort
-        "CourseRef"          = $CourseId
-        "TermId"             = "trn"
-        "PublishImmediately" = $false
-        "CourseAccount"      = "prac"
-        "TokenFilePath"      = $TokenFilePath
+    if ($UserData.count -eq 1){    
+        # Build course details    
+        if ($CourseSuffix -ne ""){$CourseSuffix = " " + $CourseSuffix.Replace(" ","")}
+        $CourseName = "Practice Course {0} {1}" -f $UserData.short_name,$CourseSuffix
+        $CourseNameShort = "Practice {0}" -f $InstructorUsername
+        $IdSuffix = $CourseSuffix.Replace(" ","_")
+        $CourseId = "PRA_" + $InstructorUsername + $IdSuffix
+        # course check
+        $CourseCheck = Get-CanvasCourseByCRN -CanvasCrn $CourseId -TokenFilePath $TokenFilePath
+        if ($CourseCheck.count -eq 1){
+            Write-Verbose "Course with SIS ID $CourseId already exists."
+        } else {
+            $CourseParams = @{
+                CourseNameLong     = $CourseName.Trim()
+                CourseNameShort    = $CourseNameShort
+                CourseRef          = $CourseId
+                TermId             = "schooltrn"
+                PublishImmediately = $false
+                CourseAccount      = "prac"
+                TokenFilePath      = $TokenFilePath
+            }
+            $NewCourseResult = New-CanvasCourse @CourseParams
+            $NewCourseId = $NewCourseResult.id
+            <# exclude template copy until one is developed
+            # copy from a template into the course
+            $CourseCopyParams = @{
+                "CourseSource"     = "$CourseSource"
+                "CourseDestination"= $NewCourseId
+                "TokenFilePath"    = $TokenFilePath
+            }
+            $CopyStatus = New-CanvasCourseCopy @CourseCopyParams
+            $StatusUrl = $CopyStatus.progress_url
+            Write-Verbose "monitor copy status at $StatusUrl"
+            #>
+            # enroll the instructor
+            $EnrollParams = @{
+                CanvasCourse  = $NewCourseId
+                CanvasUser    = "sis_login_id:{0}" -f $InstructorUsername
+                CourseRole    = "TeacherEnrollment"
+                Notify        = $false
+                TokenFilePath = $TokenFilePath
+            }
+            $NewEnrId = New-CanvasMembership @EnrollParams
+            Write-Verbose "New Enrollment ID: $NewEnrId"
+        }
     }
-    $NewCourseResult = New-CanvasCourse @CourseParams
-    $NewCourseId = $NewCourseResult.id
-    <# exclude template copy until one is developed
-    # copy from a template into the course
-    $CourseCopyParams = @{
-        "CourseSource"     = "$CourseSource"
-        "CourseDestination"= $NewCourseId
-        "TokenFilePath"    = $TokenFilePath
-    }
-    $CopyStatus = New-CanvasCourseCopy @CourseCopyParams
-    $StatusUrl = $CopyStatus.progress_url
-    Write-Verbose "monitor copy status at $StatusUrl"
-    #>
-    # enroll the instructor
-    $EnrollParams = @{
-        "CanvasCourse"  = $NewCourseId
-        "CanvasUser"    = "sis_login_id:{0}" -f $InstructorUsername
-        "CourseRole"    = "TeacherEnrollment"
-        "Notify"        = $false
-        "TokenFilePath" = $TokenFilePath
-    }
-    $NewEnrId = New-CanvasMembership @EnrollParams
-    Write-Verbose "New Enrollment ID: $NewEnrId"
+    else {
+        Write-Verbose "instructor with login $InstructorUsername not found"
+    }    
 }
 
 function New-DeveloperCourseShell {
@@ -930,45 +967,49 @@ function New-DeveloperCourseShell {
         
     # retrieve user info
     $UserData = Get-CanvasUserByLogin $InstructorUsername -TokenFilePath $TokenFilePath
-    
-    # Build course details    
-    if ($CourseSuffix -ne ""){$CourseSuffix = " " + $CourseSuffix.Replace(" ","")}
-    $CourseName = "Development Course {0} {1}" -f $UserData.short_name,$CourseSuffix
-    $CourseNameShort = "Development {0}{1}" -f $InstructorUsername,$CourseSuffix
-    $IdSuffix = $CourseSuffix.Replace(" ","_")
-    $CourseId = "DEV-" + $InstructorUsername + $IdSuffix
-    $CourseParams = @{
-        CourseNameLong      = $CourseName.Trim()
-        CourseNameShort     = $CourseNameShort
-        CourseRef           = $CourseId
-        TermId              = "default"
-        CourseAccount       = "dev"
-        PublishImmediately  = $false
-        TokenFilePath       = $TokenFilePath
+    if ($UserData.count -eq 1){
+        # Build course details    
+        if ($CourseSuffix -ne ""){$CourseSuffix = " " + $CourseSuffix.Replace(" ","")}
+        $CourseName = "Development Course {0} {1}" -f $UserData.short_name,$CourseSuffix
+        $CourseNameShort = "Development {0}{1}" -f $InstructorUsername,$CourseSuffix
+        $IdSuffix = $CourseSuffix.Replace(" ","_")
+        $CourseId = "DEV-" + $InstructorUsername + $IdSuffix
+        $CourseParams = @{
+            CourseNameLong      = $CourseName.Trim()
+            CourseNameShort     = $CourseNameShort
+            CourseRef           = $CourseId
+            TermId              = "default"
+            CourseAccount       = "schooldev"
+            PublishImmediately  = $false
+            TokenFilePath       = $TokenFilePath
+        }
+        $NewCourseResult = New-CanvasCourse @CourseParams
+        $NewCourseId = $NewCourseResult.id
+        <# exclude template copy until one is developed
+        # copy from a template into the course
+        $CourseCopyParams = @{
+            "CourseSource"     = "$CourseSource"
+            "CourseDestination"= $NewCourseId
+            "TokenFilePath"    = $TokenFilePath
+        }
+        $CopyStatus = New-CanvasCourseCopy @CourseCopyParams
+        $StatusUrl = $CopyStatus.progress_url
+        Write-Verbose "monitor copy status at $StatusUrl"
+        #>
+        # enroll the instructor
+        $EnrollParams = @{
+            CanvasCourse  = $NewCourseId
+            CanvasUser    = "sis_login_id:{0}" -f $InstructorUsername
+            CourseRole    = "TeacherEnrollment"
+            Notify        = $Notify
+            TokenFilePath = $TokenFilePath
+        }
+        $NewEnrId = New-CanvasMembership @EnrollParams
+        Write-Verbose "New Enrollment ID: $NewEnrId"
     }
-    $NewCourseResult = New-CanvasCourse @CourseParams
-    $NewCourseId = $NewCourseResult.id
-    <# exclude template copy until one is developed
-    # copy from a template into the course
-    $CourseCopyParams = @{
-        "CourseSource"     = "$CourseSource"
-        "CourseDestination"= $NewCourseId
-        "TokenFilePath"    = $TokenFilePath
+    else {
+        Write-Verbose "instructor with login $InstructorUsername not found"
     }
-    $CopyStatus = New-CanvasCourseCopy @CourseCopyParams
-    $StatusUrl = $CopyStatus.progress_url
-    Write-Verbose "monitor copy status at $StatusUrl"
-    #>
-    # enroll the instructor
-    $EnrollParams = @{
-        CanvasCourse  = $NewCourseId
-        CanvasUser    = "sis_login_id:{0}" -f $InstructorUsername
-        CourseRole    = "TeacherEnrollment"
-        Notify        = $Notify
-        TokenFilePath = $TokenFilePath
-    }
-    $NewEnrId = New-CanvasMembership @EnrollParams
-    Write-Verbose "New Enrollment ID: $NewEnrId"
 }
 
 function Get-CanvasGraphQLResults {
@@ -1473,6 +1514,8 @@ function New-CanvasNotification {
     <#
     .Synopsis 
     post a global notification into Canvas
+    .Parameter TokenFilePath
+    path to the secure string file containing the encrypted Canvas user token    
     #>
     [CmdletBinding()]
     param (
@@ -1516,6 +1559,8 @@ function Get-CanvasLogonReportForTerm {
     <#
     .Synopsis
     run a user access report for a term. then download it.
+    .Parameter TokenFilePath
+    path to the secure string file containing the encrypted Canvas user token    
     #>
     [CmdletBinding()]
     param (
@@ -1567,7 +1612,36 @@ function Get-CanvasReportStatus {
     <#
     .Synopsis
     check the status of a report by report ID
-    #>
+    .Parameter ReportName
+        report                             title
+        ------                             -----
+        eportfolio_report_csv              Eportfolio Report
+        grade_export_csv                   Grade Export
+        mgp_grade_export_csv               MGP Grade Export
+        last_user_access_csv               Last User Access             @{enrollment_term_id=; course_id=; include_deleted=}
+        last_enrollment_activity_csv       Last Enrollment Activity
+        outcome_export_csv                 Outcome Export
+        outcome_results_csv                Outcome Results
+        provisioning_csv                   Provisioning
+        recently_deleted_courses_csv       Recently Deleted Courses
+        sis_export_csv                     SIS Export
+        student_assignment_outcome_map_csv Student Competency
+        students_with_no_submissions_csv   Students with no submissions
+        unpublished_courses_csv            Unpublished Courses
+        public_courses_csv                 Public Courses
+        course_storage_csv                 Course Storage
+        unused_courses_csv                 Unused Courses
+        zero_activity_csv                  Zero Activity                @{enrollment_term_id=; start_at=; course_id=}
+        user_access_tokens_csv             User Access Tokens
+        lti_report_csv                     LTI Report
+        user_course_access_log_csv         User Course Access Log    
+    .Parameter ReportId
+    id of the report instance
+    .Parameter Account
+    account identifer against which the report is being run
+    .Parameter TokenFilePath
+    path to the secure string file containing the encrypted Canvas user token
+        #>
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true)]
@@ -1581,7 +1655,52 @@ function Get-CanvasReportStatus {
         
         [Parameter(Mandatory=$true)]
         [string]$TokenFilePath
-    )    
+    )
+    # status of report  GET /api/v1/accounts/:account_id/reports/:report/:id
+    $ReportStatusUrl = "https://{0}/api/v1/accounts/{1}/reports/{2}/{3}" -f $global:CanvasSite,$Account,$ReportName,$ReportId
+    Get-CanvasItem -CanvasApiUrl $ReportStatusUrl -TokenFilePath $TokenFilePath
+}
+
+function Start-CanvasUserReportForTerm {
+    <#
+    .Synopsis
+    run a user access report for a term. then download it.
+    .Parameter TokenFilePath
+    path to the secure string file containing the encrypted Canvas user token    
+    #>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$TermId,
+        
+        [Parameter(Mandatory=$false)]
+        [string]$Account="self",
+        
+        [Parameter(Mandatory=$false)]
+        [string]$ReportName="provisioning_csv",        
+
+        [Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    
+    <#
+    title      : Provisioning
+    parameters : @{enrollment_term_id=; users=; accounts=; terms=; courses=; sections=; enrollments=; groups=;
+                group_categories=; group_membership=; xlist=; user_observers=; admins=; created_by_sis=;
+                include_deleted=; enrollment_filter=; enrollment_states=}
+    report     : provisioning_csv    
+    
+    title      : SIS Export
+    parameters : @{enrollment_term_id=; users=; accounts=; terms=; courses=; sections=; enrollments=; groups=;
+                group_categories=; group_membership=; xlist=; user_observers=; admins=; created_by_sis=; include_deleted=}
+    report     : sis_export_csv    
+    
+    # POST /api/v1/accounts/:account_id/reports/:report
+    #>
+    
+    $ReportUrl = "https://{0}/api/v1/accounts/{1}/reports/{2}" -f $global:CanvasSite,$Account,$ReportName
+    $Paramaters = @{parameters = @{enrollment_term_id = $TermId;users = "true"}} | ConvertTo-Json
+    Send-CanvasUpdate -CanvasApiUrl $ReportUrl -RequestBody $Paramaters -ApiVerb "POST" -TokenFilePath $TokenFilePath
 }
 
 function Get-CurrentTermCode {
