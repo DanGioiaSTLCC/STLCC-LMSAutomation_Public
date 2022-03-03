@@ -3,6 +3,7 @@
 Canvas REST API classes and functions as well as integration upload
 All functions tested against PowerShell 7 only
 Most if not all functions included assume the token is or will be stored in a secure string file
+Set VerbosePreference equal to Continue to ready any console output
 
 .DESCRIPTION
 Canvas tokens can be retrieved by running Get-CanvasTokenString
@@ -42,6 +43,7 @@ OAuth tokens are only used for 3-legged OAuth in Canvas
 We will need to setup a policy on expiry for automation tokens
 ------------------------------------------------
 #>
+
 <#function Get-UrlUtf8EncodedString {
     [CmdletBinding()]
     param (
@@ -102,13 +104,23 @@ function Send-CanvasUpdate {
         [string]$TokenFilePath
     )
     $TokenString = Get-CanvasTokenString $TokenFilePath
-    if ($RequestBody -eq ""){
-        $result = Invoke-RestMethod -Method $ApiVerb -Headers @{"Authorization"="Bearer $TokenString"} -Uri $CanvasApiUrl
+    $RestParams = @{
+        Method = $ApiVerb
+        Uri = $CanvasApiUrl
+        Headers = @{
+            Authorization = "Bearer $TokenString"
+        }
+        ResponseHeadersVariable = "ResponseHeaders"
     }
-    else {
-        $result = Invoke-RestMethod -Method $ApiVerb -Headers @{"Authorization"="Bearer $TokenString"} -Uri $CanvasApiUrl -Body $RequestBody -ContentType "application/json"
+    if ($RequestBody -ne ""){
+        $RestParams.Add("Body",$RequestBody)
+        $RestParams.Add("ContentType","application/json")
     }
-    
+    $result = Invoke-RestMethod @RestParams
+    if ($ResponseHeaders.Status -like "40*"){
+        $ResponseHeaders
+        Exit 55
+    }
     # clear token data
     $TokenString = $null
     Remove-Variable -Name "TokenString"
@@ -125,7 +137,7 @@ function Get-CanvasItem {
         [string]$TokenFilePath
     )
     $TokenString = Get-CanvasTokenString $TokenFilePath
-    $result = Invoke-RestMethod -Method GET -Headers @{"Authorization"="Bearer $TokenString"} -Uri $CanvasApiUrl
+    $result = Invoke-RestMethod -Method GET -Headers @{"Authorization"="Bearer $TokenString"} -Uri $CanvasApiUrl -ResponseHeadersVariable ResponseHeaders
     # clear token data
     $TokenString = $null
     Remove-Variable -Name "TokenString"    
@@ -401,9 +413,9 @@ function New-CanvasUser {
     }
     # combine user objects into one
     $UserObject = @{
-        "user" = $userParts
-        "pseudonym" = $pseudonymParts
-        "communication_channel" = $comParts
+        user = $userParts
+        pseudonym = $pseudonymParts
+        communication_channel = $comParts
     }
     # format the data as JSON
     $UserObjectBody = ConvertTo-Json -InputObject $UserObject
@@ -580,6 +592,8 @@ function New-CanvasMembership {
     #>
     # control for role specifiers
     if ($CourseRole.ToLower() -eq "student") {$CourseRole = "StudentEnrollment"}
+    if ($CourseRole.ToLower() -eq "builder"-or ($CourseRole.ToLower() -eq "designer")) {$CourseRole = "DesignerEnrollment"}
+    if (($CourseRole.ToLower() -eq "ta") -or ($CourseRole.ToLower() -eq "assistant")) {$CourseRole = "TaEnrollment"}
     if (($CourseRole.ToLower() -eq "instructor") -or ($CourseRole.ToLower() -eq "teacher")) {$CourseRole = "TeacherEnrollment"}
     # build the route
     $EnrollmentUrl = "https://{0}/api/v1/courses/{1}/enrollments" -f $global:CanvasSite,$CanvasCourse
@@ -646,7 +660,7 @@ Set-Alias -Name Get-CanvasUserEnrollments -Value Get-CanvasUserMemberships
 function Set-CanvasCourseMembershipStatus {
     <#
     .Synopsis 
-    updates existing enrollments user course identifier and username
+    updates existing enrollments user course identifier and user sis identifier
     .Parameter CanvasCourse
     course identifier, use standard Canvas API searches such as sis_course_id:XXX 
     .Parameter CanvasUser
@@ -817,13 +831,13 @@ function Set-CanvasCourseStatus {
     [string]$CourseUpdateUrl = "https://{0}/api/v1/courses/{1}" -f $global:CanvasSite,$CourseId
     # format the status
     switch ($CourseStatus){
-        {"publish","published","available","visible","offer"} {
+        {@("publish","published","available","visible","offer") -contains $_} {
             $CourseStatus = "offer"
         }
-        {"conclude","concluded","done","finished"} {
+        {@("conclude","concluded","done","finished") -contains $_} {
             $CourseStatus = "conclude"
         }
-        {"claim","unavailable","unpublished"} {
+        {@("claim","unavailable","unpublished") -contains $_} {
             $CourseStatus = "claim"
         }
         "delete" {
@@ -884,6 +898,7 @@ function New-InstructorSandbox {
     )
         
     # retrieve user info
+    Write-Verbose "Getting User Info."
     $UserData = Get-CanvasUserByLogin $InstructorUsername -TokenFilePath $TokenFilePath
     if ($UserData.count -eq 1){    
         # Build course details    
@@ -893,6 +908,7 @@ function New-InstructorSandbox {
         $IdSuffix = $CourseSuffix.Replace(" ","_")
         $CourseId = "PRA_" + $InstructorUsername + $IdSuffix
         # course check
+        Write-Verbose "Checking for existing practice course"
         $CourseCheck = Get-CanvasCourseByCRN -CanvasCrn $CourseId -TokenFilePath $TokenFilePath
         if ($CourseCheck.count -eq 1){
             Write-Verbose "Course with SIS ID $CourseId already exists."
@@ -906,6 +922,7 @@ function New-InstructorSandbox {
                 CourseAccount      = "prac"
                 TokenFilePath      = $TokenFilePath
             }
+            Write-Verbose "Creating new practice course"
             $NewCourseResult = New-CanvasCourse @CourseParams
             $NewCourseId = $NewCourseResult.id
             <# exclude template copy until one is developed
@@ -927,6 +944,7 @@ function New-InstructorSandbox {
                 Notify        = $false
                 TokenFilePath = $TokenFilePath
             }
+            Write-Verbose "Adding instructor to course"
             $NewEnrId = New-CanvasMembership @EnrollParams
             Write-Verbose "New Enrollment ID: $NewEnrId"
         }
@@ -1094,12 +1112,8 @@ function Invoke-CanvasCourseContentReset {
         [string]$TokenFilePath
     )
     [string]$CourseResetUrl = "https://{0}/api/v1/courses/{1}/reset_content" -f $global:CanvasSite,$CourseId   
-    $TokenString = Get-CanvasTokenString $TokenFilePath
-    $result = Invoke-RestMethod -Method POST -Headers @{"Authorization"="Bearer $TokenString"} -Uri $CourseResetUrl
-    # clear token data
-    $TokenString = $null
-    Remove-Variable -Name "TokenString"
-    return $result    
+    $result = Send-CanvasUpdate -CanvasApiUrl $CourseResetUrl -ApiVerb "POST" -TokenFilePath $TokenFilePath
+    return $result
 }
 
 function Compress-String {
@@ -1344,12 +1358,15 @@ function Get-CanvasCourseTabs {
     $CourseTabsUrl = "https://{0}/api/v1/courses/{1}/tabs" -f $global:CanvasSite,$CanvasCourse
     # construct the parameters
     $ListParams = @{
-        "CanvasApiUrl" = $CourseTabsUrl
-        "TokenFilePath" = $TokenFilePath
+        CanvasApiUrl = $CourseTabsUrl
+        TokenFilePath = $TokenFilePath
+        PerPage = 100
     }
     # call the requestor
-    Get-CanvasItemList @ListParams
+    $results = Get-CanvasItemList @ListParams
+    return $results
 }
+
 function Get-CanvasSubAccounts {
     <#
     .Synopsis
@@ -1364,8 +1381,8 @@ function Get-CanvasSubAccounts {
     )
     $AcctUrl = "https://{0}/api/v1/accounts/self/sub_accounts" -f $global:CanvasSite
     $AcctListParams = @{
-        "CanvasApiUrl" = $AcctUrl
-        "TokenFilePath" = $TokenFilePath
+        CanvasApiUrl = $AcctUrl
+        TokenFilePath = $TokenFilePath
     }
     Get-CanvasItemList @AcctListParams
 }
@@ -1725,7 +1742,7 @@ function Get-CurrentTermCode {
             $tc = "10"
         }
         {@("5", "05") -contains $_} {
-            if ($nowstamp.Day -gt 15){
+            if ($nowstamp.Day -gt 10){
                 $tc = "20"
             }
             else {
@@ -1867,4 +1884,26 @@ function Set-CanvasCourseTeamsMeetingsEnabled {
     $CourseToolUrl = "https://{0}/api/v1/courses/{1}/external_tools" -f $global:CanvasSite,$CourseId
     $UpdateBody = @{client_id = "170000000000703"}|ConvertTo-Json
     Send-CanvasUpdate -CanvasApiUrl $CourseToolUrl -RequestBody $UpdateBody -ApiVerb "POST" -TokenFilePath $TokenFilePath
+}
+
+function Set-CanvasCourseTabVisibility {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$CourseId
+
+        ,[Parameter(Mandatory=$true)]
+        [string]$TabId
+
+        ,[Parameter(Mandatory=$true)]
+        [bool]$Hidden
+        
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # PUT /api/v1/courses/:course_id/tabs/:tab_id
+    $UpdateBody = @{hidden = $Hidden.ToString()}|convertto-json
+    $UpdateUrl = "https://{0}/api/v1/courses/{1}/tabs/{2}" -f $global:CanvasSite,$CourseId,$TabId
+    Send-CanvasUpdate -CanvasApiUrl $UpdateUrl -RequestBody $UpdateBody -ApiVerb "PUT" -TokenFilePath $TokenFilePath
+
 }

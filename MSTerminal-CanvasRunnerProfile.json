@@ -1,0 +1,12 @@
+            {
+                "colorScheme": "Tango Dark",
+                "commandline": "pwsh.exe -NoExit -noprofile -nologo -file \"%USERPROFILE%\\Dev\\MyPSTools\\CanvasRunner.ps1\"",
+                "font": 
+                {
+                    "face": "Cascadia Code"
+                },
+                "icon": "ms-appx:///ProfileIcons/pwsh.png",
+                "name": "Canvas Runner",
+                "startingDirectory": "%USERPROFILE%\\Dev",
+                "tabTitle": "Canvas Runner"
+            },
