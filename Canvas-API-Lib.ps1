@@ -88,6 +88,37 @@ function Get-StringHash {
     return $HashResult.Hash
 }
 
+function Get-Base64String {
+    [CmdletBinding()]
+    param (
+        [Parameter()]
+        [string]$InputString
+    )
+    $EncodedText =[Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($InputString))
+    return $EncodedText
+}
+
+function Get-CanvasSisSshaPasswordText {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$PassPlainText
+
+        ,[Parameter(Mandatory=$true)]
+        [string]$PassTheSalt
+    )    
+    return Get-Base64String -InputString ("{0}{1}" -f (Get-StringHash -StringToHash ("{0}{1}" -f $PassPlainText,$PassTheSalt) -HashAlgorithm SHA1).ToLower(),$PassTheSalt)
+}
+
+function Get-IsoDate {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$DateInputString
+    )
+    $DateString = Get-Date $DateInputString -AsUTC -Format u
+    return $DateString.ToString()
+}
 function Send-CanvasUpdate {
     [CmdletBinding()]
     param (
@@ -917,7 +948,7 @@ function New-InstructorSandbox {
                 CourseNameLong     = $CourseName.Trim()
                 CourseNameShort    = $CourseNameShort
                 CourseRef          = $CourseId
-                TermId             = "schooltrn"
+                TermId             = "trn"
                 PublishImmediately = $false
                 CourseAccount      = "prac"
                 TokenFilePath      = $TokenFilePath
@@ -997,7 +1028,7 @@ function New-DeveloperCourseShell {
             CourseNameShort     = $CourseNameShort
             CourseRef           = $CourseId
             TermId              = "default"
-            CourseAccount       = "schooldev"
+            CourseAccount       = "dev"
             PublishImmediately  = $false
             TokenFilePath       = $TokenFilePath
         }
@@ -1907,3 +1938,173 @@ function Set-CanvasCourseTabVisibility {
     Send-CanvasUpdate -CanvasApiUrl $UpdateUrl -RequestBody $UpdateBody -ApiVerb "PUT" -TokenFilePath $TokenFilePath
 
 }
+
+function New-InstructorTrainingMembership {
+[CmdletBinding()]
+param (
+    [Parameter(Mandatory=$true)]
+    [string]$CanvasUsername
+    
+    ,[Parameter(Mandatory=$false)]
+    [string]$CanvasCourse="sis_course_id:TRN-OE-FacCert"
+
+    ,[Parameter(Mandatory=$true)]
+    [string]$TokenFilePath    
+)
+    [string]$CanvasUserSpecifier = "sis_login_id:{0}" -f $CanvasUsername
+    $EnrParams = @{
+        CanvasCourse = $CanvasCourse
+        CanvasUser = $CanvasUserSpecifier
+        CourseRole = "student"
+        Notify = $false
+        TokenFilePath = $TokenFilePath
+    }
+    $EnrollmentResult = New-CanvasMembership @EnrParams
+    return $EnrollmentResult
+}
+
+function Set-AllyConfigVisibilityAdmin {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [bool]$Visible
+        
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    #/api/v1/accounts/:account_id/external_tools/:external_tool_id
+    $VisiblityUrl = "https://{0}/api/v1/accounts/1/external_tools/54" -f $global:CanvasSite
+    $VisibilityUpdate = @{account_navigation = @{enabled = $Visible.ToString()}}|ConvertTo-Json
+    $UpdateParams = @{
+        CanvasApiUrl = $VisiblityUrl
+        RequestBody = $VisibilityUpdate
+        ApiVerb = "PUT"
+        TokenFilePath = $TokenFilePath
+    }
+    $UpdateResult = Send-CanvasUpdate @UpdateParams
+    return $UpdateResult
+}
+
+function Set-CanvasToolVisibilityDefault {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$ToolId
+        
+        ,[Parameter(Mandatory=$true)]
+        [string]$ToolName
+
+        ,[Parameter(Mandatory=$true)]
+        [bool]$Visible
+
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    [string]$Visibility = "disabled"
+    if ($Visible){$Visibility = "enabled"}
+    $UpdateUrl = "https://{0}/api/v1/accounts/1/external_tools/{1}" -f $global:CanvasSite,$ToolId
+    $UpdateUrl += "?course_navigation[deafult]={2}&name={3}" -f $Visibility,$ToolName
+    $UpdateParams = @{
+        CanvasApiUrl = $UpdateUrl
+        ApiVerb = "PUT"
+        TokenFilePath = $TokenFilePath
+    }
+    $UpdateResult = Send-CanvasUpdate @UpdateParams
+    return $UpdateResult
+}
+
+function New-CanvasCourseSection {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$CourseId
+        
+        ,[Parameter(Mandatory=$true)]
+        [string]$NewSectionSisId
+        
+        ,[Parameter(Mandatory=$true)]
+        [string]$NewSectionName
+
+        ,[Parameter(Mandatory=$false)]
+        [string]$StartDate=""
+
+        ,[Parameter(Mandatory=$false)]
+        [string]$EndDate=""
+
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    #POST /api/v1/courses/:course_id/sections
+    # format the api url
+    $NewSectionUrl = "https://{0}/api/v1/courses/{1}/sections" -f $global:CanvasSite,$CourseId
+    # structure the section data
+    $NewSectionData = @{
+        course_section = @{
+            name = $NewSectionName
+            sis_section_id = $NewSectionSisId
+        }
+    }
+    # add start date if specified
+    if ($StartDate -ne ""){
+        $StartDate = Get-IsoDate $StartDate
+        $NewSectionData.course_section.add("start_at",$StartDate)
+    }
+    # add the end date if specified
+    if ($EndDate -ne ""){
+        $EndDate = Get-IsoDate $EndDate
+        $NewSectionData.course_section.add("end_at",$EndDate)
+    }
+    # format the data for upload
+    $NewSectionBody = $NewSectionData|ConvertTo-Json
+    # configure upload parameters
+    $NewSectionParams = @{
+        CanvasApiUrl = $NewSectionUrl
+        RequestBody = $NewSectionBody
+        ApiVerb = "POST"
+        TokenFilePath = $TokenFilePath
+    }
+    # send the update
+    $NewSectionResult = Send-CanvasUpdate @NewSectionParams
+    return $NewSectionResult
+}
+<#
+function new-genericfunction {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$ItemId
+        
+        ,[Parameter(Mandatory=$false)]
+        [string]$Optional=""
+
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # format the api url
+    $ApiUrl = "https://{0}/api/v1/endpoint/{1}" -f $global:CanvasSite,$ItemId
+    # structure the new data
+    $NewData = @{
+        toplevel = @{
+            item = $ItemId
+        }
+    }
+    # add optional data if specified
+    if ($Optional-ne ""){
+        $NewData.toplevel.add("option",$Optional)
+    }
+
+    # format the data for upload
+    $NewDataBody = $NewData|ConvertTo-Json
+    
+    # configure upload parameters
+    $NewDataParams = @{
+        CanvasApiUrl = $ApiUrl
+        RequestBody = $NewDataBody
+        ApiVerb = "POST"
+        TokenFilePath = $TokenFilePath
+    }
+    # send the update
+    $NewItemResult = Send-CanvasUpdate @NewDataParams
+    return $NewItemResult
+}
+#>
