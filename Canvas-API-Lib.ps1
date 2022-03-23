@@ -106,8 +106,9 @@ function Get-CanvasSisSshaPasswordText {
 
         ,[Parameter(Mandatory=$true)]
         [string]$PassTheSalt
-    )    
-    return Get-Base64String -InputString ("{0}{1}" -f (Get-StringHash -StringToHash ("{0}{1}" -f $PassPlainText,$PassTheSalt) -HashAlgorithm SHA1).ToLower(),$PassTheSalt)
+    )
+    $SisPw = "{SSHA}" + (Get-Base64String -InputString ("{0}{1}" -f (Get-StringHash -StringToHash ("{0}{1}" -f $PassPlainText,$PassTheSalt) -HashAlgorithm SHA1).ToLower(),$PassTheSalt))
+    return $SisPw
 }
 
 function Get-IsoDate {
@@ -119,6 +120,7 @@ function Get-IsoDate {
     $DateString = Get-Date $DateInputString -AsUTC -Format u
     return $DateString.ToString()
 }
+
 function Send-CanvasUpdate {
     [CmdletBinding()]
     param (
@@ -257,15 +259,18 @@ function Send-CanvasSisFile {
         [Parameter(Mandatory = $true)]
         [string]$TokenFilePath,
         
-        [Parameter()]
+        [Parameter(Mandatory = $false)]
         [bool]$SkipDeletes = $true,
 
-        [Parameter()]
+        [Parameter(Mandatory = $false)]
         [bool]$Zip = $false,
 
         # Diffing Drop Modes (inactive, deleted, completed)
-        [Parameter()]
+        [Parameter(Mandatory = $false)]
         [string]$DropMode = "inactive"
+
+        ,[Parameter(Mandatory = $false)]
+        [string]$OtherArguments = ""
     )
     $TokenString = Get-CanvasTokenString $TokenFilePath
     # format the upload url
@@ -273,8 +278,9 @@ function Send-CanvasSisFile {
     $UploadRoute += "?import_type=instructure_csv"
     if ($Zip){$UploadRoute += "&extension=zip"} else {$UploadRoute += "&extension=csv"}
     if ($SkipDeletes){$UploadRoute += "&skip_deletes=true"}
+    if ($OtherArguments -ne ""){$UploadRoute += $OtherArguments}
     $UploadRoute += "&override_sis_stickiness=true&clear_sis_stickiness"
-    
+    Write-Verbose $UploadRoute
     # send the results to canvas
     $UploadResult = Invoke-restmethod -Method POST -Headers @{"Authorization"="Bearer $TokenString"} -Uri $UploadRoute -InFile $UploadFilePath -ContentType "text/csv"
     
@@ -597,7 +603,7 @@ function New-CanvasMembership {
     course membership role.  use student or instructor
     .Parameter Notify
     switch to send notification or notify new enrollee of new enrollment
-    use PowerShell boolean value
+    use PowerShell boolean value when splatting
     .Parameter TokenFilePath
     path of the file containing the token text stored as a secure string
     #>
@@ -612,8 +618,8 @@ function New-CanvasMembership {
         [Parameter(Mandatory=$true)]
         [string]$CourseRole,
 
-        [Parameter(Mandatory=$false)]
-        [bool]$Notify=$false,
+        [Parameter()]
+        [switch]$Notify,
 
         [Parameter(Mandatory=$true)]
         [string]$TokenFilePath
@@ -621,6 +627,7 @@ function New-CanvasMembership {
     <#
     types: StudentEnrollment, TeacherEnrollment, TaEnrollment, ObserverEnrollment, DesignerEnrollment
     #>
+    
     # control for role specifiers
     if ($CourseRole.ToLower() -eq "student") {$CourseRole = "StudentEnrollment"}
     if ($CourseRole.ToLower() -eq "builder"-or ($CourseRole.ToLower() -eq "designer")) {$CourseRole = "DesignerEnrollment"}
@@ -632,9 +639,10 @@ function New-CanvasMembership {
     $Enrollment = @{
         "user_id" = $CanvasUser
         "type" = $CourseRole
-        "notify" = $Notify.ToString()
         "enrollment_state" = "active"
     }
+    # add notify if set
+    if ($Notify){$Enrollment.Add("notify","true")}
     $EnrollmentBody = @{"enrollment"= $Enrollment}
     $EnrollmentBodyParts = ConvertTo-Json $EnrollmentBody
     $NewEnrollment = Send-CanvasUpdate -CanvasApiUrl $EnrollmentUrl -RequestBody $EnrollmentBodyParts -TokenFilePath $TokenFilePath    
@@ -990,6 +998,12 @@ function New-DeveloperCourseShell {
     .Synopsis
     creates a new Development course, enrolls instructor, copies template, notifies instructor
 
+    .Parameter InstructorUsername
+    login id (username) of instructor for whom to create the development course shell
+
+    .Parameter CourseSuffix
+    extra information to ID the course shell, examples: BIO207,BIO207-8
+
     .Parameter TokenFilePath
     path to the secure string file containing the encrypted Canvas user token
     #>
@@ -999,19 +1013,13 @@ function New-DeveloperCourseShell {
         [string]$InstructorUsername,
         
         [Parameter(Mandatory=$false)]
-        [string]$AlternateEmail,
-        
-        [Parameter(Mandatory=$false)]
         [string]$CourseSuffix="",
 
         [Parameter(Mandatory=$true)]
         [string]$TokenFilePath,
 
         [Parameter(Mandatory=$false)]
-        [string]$CourseSource = "sis_course_id:TPL-Empty",
-
-        [Parameter(Mandatory=$false)]
-        [bool]$Notify = $true
+        [string]$CourseSource = ""
     )
         
     # retrieve user info
@@ -1033,28 +1041,23 @@ function New-DeveloperCourseShell {
             TokenFilePath       = $TokenFilePath
         }
         $NewCourseResult = New-CanvasCourse @CourseParams
-        $NewCourseId = $NewCourseResult.id
-        <# exclude template copy until one is developed
-        # copy from a template into the course
-        $CourseCopyParams = @{
-            "CourseSource"     = "$CourseSource"
-            "CourseDestination"= $NewCourseId
-            "TokenFilePath"    = $TokenFilePath
+        if ($NewCourseResult) {
+            $NewCourseId = $NewCourseResult.id
+            Write-Verbose ("New Course: {0}|{1}" -f $NewCourseId,$NewCourseResult.sis_course_id)
+            # enroll the instructor
+            $EnrollParams = @{
+                CanvasCourse  = $NewCourseId
+                CanvasUser    = "sis_login_id:{0}" -f $InstructorUsername
+                CourseRole    = "TeacherEnrollment"
+                Notify        = $True
+                TokenFilePath = $TokenFilePath
+            }        
+            $NewEnrollment = New-CanvasMembership @EnrollParams
+            Write-Verbose ("New Enrollment ID: {0}|{1} in {2}" -f $NewEnrollment.id,$NewEnrollment.role,$NewEnrollment.sis_course_id)
         }
-        $CopyStatus = New-CanvasCourseCopy @CourseCopyParams
-        $StatusUrl = $CopyStatus.progress_url
-        Write-Verbose "monitor copy status at $StatusUrl"
-        #>
-        # enroll the instructor
-        $EnrollParams = @{
-            CanvasCourse  = $NewCourseId
-            CanvasUser    = "sis_login_id:{0}" -f $InstructorUsername
-            CourseRole    = "TeacherEnrollment"
-            Notify        = $Notify
-            TokenFilePath = $TokenFilePath
+        else {
+            Write-Verbose "Course Creation of $CourseId failed"
         }
-        $NewEnrId = New-CanvasMembership @EnrollParams
-        Write-Verbose "New Enrollment ID: $NewEnrId"
     }
     else {
         Write-Verbose "instructor with login $InstructorUsername not found"
@@ -1408,12 +1411,16 @@ function Get-CanvasSubAccounts {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true)]
-        [string]$TokenFilePath            
+        [string]$TokenFilePath,
+
+        [Parameter(Mandatory=$false)]
+        [string]$AccountId="self"
     )
-    $AcctUrl = "https://{0}/api/v1/accounts/self/sub_accounts" -f $global:CanvasSite
+    $AcctUrl = "https://{0}/api/v1/accounts/{1}/sub_accounts" -f $global:CanvasSite,$AccountId
     $AcctListParams = @{
         CanvasApiUrl = $AcctUrl
         TokenFilePath = $TokenFilePath
+        PerPage = "100"
     }
     Get-CanvasItemList @AcctListParams
 }
