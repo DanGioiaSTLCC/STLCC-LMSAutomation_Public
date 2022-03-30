@@ -956,7 +956,7 @@ function New-InstructorSandbox {
                 CourseNameLong     = $CourseName.Trim()
                 CourseNameShort    = $CourseNameShort
                 CourseRef          = $CourseId
-                TermId             = "trn"
+                TermId             = "schooltrn"
                 PublishImmediately = $false
                 CourseAccount      = "prac"
                 TokenFilePath      = $TokenFilePath
@@ -1036,7 +1036,7 @@ function New-DeveloperCourseShell {
             CourseNameShort     = $CourseNameShort
             CourseRef           = $CourseId
             TermId              = "default"
-            CourseAccount       = "dev"
+            CourseAccount       = "schooldev"
             PublishImmediately  = $false
             TokenFilePath       = $TokenFilePath
         }
@@ -2074,6 +2074,93 @@ function New-CanvasCourseSection {
     $NewSectionResult = Send-CanvasUpdate @NewSectionParams
     return $NewSectionResult
 }
+
+function Get-CollegeEmailAddressFromAD {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$CollegeUsername
+    )
+    $EmamilSearchResult = "not found"
+    try {
+        $ADSearchResult = Get-ADUser -Identity $CollegeUsername -Properties EmailAddress
+        if (($null -ne $ADSearchResult) -and ($null -ne $ADSearchResult.EmailAddress) -and ($ADSearchResult.EmailAddress -ne "")){
+            $EmamilSearchResult = $ADSearchResult.EmailAddress
+        }
+    } catch { 
+        #log error conditions 
+    }
+    return $EmamilSearchResult
+}
+
+function Set-CanvasCourseFormat {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$CourseId
+
+        
+        ,[Parameter(Mandatory=$false)]
+        [string]$NewFormat = ""
+
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # PUT /api/v1/courses/:id
+    $UpdateBody = @{course = @{course_format = $NewFormat}}|convertto-json
+    $UpdateUrl = "https://{0}/api/v1/courses/{1}" -f $global:CanvasSite,$CourseId
+    $UpdateResult = Send-CanvasUpdate -CanvasApiUrl $UpdateUrl -RequestBody $UpdateBody -ApiVerb "PUT" -TokenFilePath $TokenFilePath
+    return $UpdateResult
+}
+Set-Alias -Name Set-CanvasCourseModality -Value Set-CanvasCourseFormat
+
+function Set-CanvasCourseTerm {
+    <#
+    .Synopsis
+    Update the term to which a course is associated
+    .Parameter CourseId
+    identifier for the course. can be any id for the course, including sis_course_id:
+    .Parameter TermId
+    the numerical ID of the term.  must use the numerical ID of the term (as properties of the term, NOT the sis_term_id)
+    to enumerate existing terms, run Get-CanvasTerms
+    .Parameter TokenFilePath
+    path to the secure string file containing the encrypted Canvas user token  
+    #>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$CourseId
+        
+        ,[Parameter(Mandatory=$true)]
+        [string]$TermId
+
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # format the api url
+    $ApiUrl = "https://{0}/api/v1/courses/{1}" -f $global:CanvasSite,$CourseId
+    # structure the new data
+    $NewData = @{
+        course = @{
+            term_id = $TermId
+        }
+    }
+
+    # format the data for upload
+    $NewDataBody = $NewData|ConvertTo-Json
+    
+    # configure upload parameters
+    $NewDataParams = @{
+        CanvasApiUrl = $ApiUrl
+        RequestBody = $NewDataBody
+        ApiVerb = "PUT"
+        TokenFilePath = $TokenFilePath
+    }
+    # send the update
+    $CourseUpdateResult = Send-CanvasUpdate @NewDataParams
+    return $CourseUpdateResult
+}
+
 <#
 function new-genericfunction {
     [CmdletBinding()]
