@@ -267,9 +267,12 @@ function Send-CanvasSisFile {
 
         # Diffing Drop Modes (inactive, deleted, completed)
         [Parameter(Mandatory = $false)]
-        [string]$DropMode = "inactive"
+        [string]$DropMode = "inactive",
 
-        ,[Parameter(Mandatory = $false)]
+        [Parameter(Mandatory = $false)]
+        [bool]$OverrideStickiness = $true,
+        
+        [Parameter(Mandatory = $false)]
         [string]$OtherArguments = ""
     )
     $TokenString = Get-CanvasTokenString $TokenFilePath
@@ -277,9 +280,13 @@ function Send-CanvasSisFile {
     [string]$UploadRoute = "https://{0}/api/v1/accounts/1/sis_imports.json" -f  $global:CanvasSite;
     $UploadRoute += "?import_type=instructure_csv"
     if ($Zip){$UploadRoute += "&extension=zip"} else {$UploadRoute += "&extension=csv"}
-    if ($SkipDeletes){$UploadRoute += "&skip_deletes=true"}
-    if ($OtherArguments -ne ""){$UploadRoute += $OtherArguments}
-    $UploadRoute += "&override_sis_stickiness=true&clear_sis_stickiness"
+    if ($SkipDeletes) {
+        $UploadRoute += "&skip_deletes=true"
+    } else {
+        $UploadRoute += "&diffing_drop_status=" + $DropMode
+    }
+    if ($OtherArguments -ne ""){$UploadRoute += "&" + $OtherArguments}
+    if ($OverrideStickiness){$UploadRoute += "&override_sis_stickiness=true&add_sis_stickiness"}
     Write-Verbose $UploadRoute
     # send the results to canvas
     $UploadResult = Invoke-restmethod -Method POST -Headers @{"Authorization"="Bearer $TokenString"} -Uri $UploadRoute -InFile $UploadFilePath -ContentType "text/csv"
@@ -690,6 +697,7 @@ function Get-CanvasUserMemberships {
     $MembershipListParams = @{
         CanvasApiUrl = $CourseUsersUrl
         TokenFilePath = $TokenFilePath
+        PerPage = 100
     }
     # call the requestor
     Get-CanvasItemList @MembershipListParams    
@@ -1732,7 +1740,13 @@ function Start-CanvasUserReportForTerm {
         [string]$Account="self",
         
         [Parameter(Mandatory=$false)]
-        [string]$ReportName="provisioning_csv",        
+        [string]$ReportName="sis_export_csv",
+
+        [Parameter(Mandatory=$false)]
+        [string]$IncludeUsers="true",
+
+        [Parameter(Mandatory=$false)]
+        [string]$IncludeCourses="true",
 
         [Parameter(Mandatory=$true)]
         [string]$TokenFilePath
@@ -1751,10 +1765,46 @@ function Start-CanvasUserReportForTerm {
     report     : sis_export_csv    
     
     # POST /api/v1/accounts/:account_id/reports/:report
+    
+    title      : Last User Access
+    parameters : @{enrollment_term_id=; course_id=; include_deleted=}
+    report     : last_user_access_csv
+    last_run   : @{id=46; progress=100; parameters=; current_line=2677; status=complete; report=last_user_access_csv;
+        created_at=4/1/2022 11:38:02 AM; started_at=4/1/2022 11:38:03 AM; ended_at=4/1/2022 11:38:11 AM;
+        file_url=; attachment=}
+
+    title      : Zero Activity
+    parameters : @{enrollment_term_id=; start_at=; course_id=}
+    report     : zero_activity_csv
+    last_run   : @{id=45; progress=100; parameters=; current_line=5617; status=complete; report=zero_activity_csv;
+        created_at=4/1/2022 9:18:14 AM; started_at=4/1/2022 9:18:25 AM; ended_at=4/1/2022 9:18:26 AM;
+        file_url=; attachment=}
+    
+    title      : Last User Access
+    parameters : @{enrollment_term_id=; course_id=; include_deleted=}
+    report     : last_user_access_csv
+    last_run   : @{id=46; progress=100; parameters=; current_line=2677; status=complete; report=last_user_access_csv;
+        created_at=4/1/2022 11:38:02 AM; started_at=4/1/2022 11:38:03 AM; ended_at=4/1/2022 11:38:11 AM;
+        file_url=; attachment=}
+
+    title      : User Access Tokens
+    parameters : @{include_deleted=}
+    report     : user_access_tokens_csv
+    last_run   : @{id=23; progress=100; parameters=; current_line=279; status=complete; report=user_access_tokens_csv;
+        created_at=1/5/2022 3:50:54 PM; started_at=1/5/2022 3:50:54 PM; ended_at=1/5/2022 3:50:55 PM;
+        file_url=; attachment=}
+
+    title      : User Course Access Log
+    parameters : @{start_at=; term=; enrollment_type=}
+    report     : user_course_access_log_csv
+    last_run   : @{id=10; progress=100; parameters=; current_line=1166; status=complete;
+        report=user_course_access_log_csv; created_at=11/3/2021 2:20:35 PM; started_at=11/3/2021 2:20:43 PM;
+        ended_at=11/3/2021 2:20:46 PM; file_url=;
+        attachment=}
     #>
     
     $ReportUrl = "https://{0}/api/v1/accounts/{1}/reports/{2}" -f $global:CanvasSite,$Account,$ReportName
-    $Paramaters = @{parameters = @{enrollment_term_id = $TermId;users = "true"}} | ConvertTo-Json
+    $Paramaters = @{parameters = @{enrollment_term_id = $TermId;users = "$IncludeUsers";courses = $IncludeCourses   ;sections = "true";enrollments = "true"}} | ConvertTo-Json
     Send-CanvasUpdate -CanvasApiUrl $ReportUrl -RequestBody $Paramaters -ApiVerb "POST" -TokenFilePath $TokenFilePath
 }
 
@@ -1853,7 +1903,7 @@ function Invoke-CanvasSisMonitor {
                     $FinalMsg = "SIS import task {0} finished with state:{1}" -f $SisJobId,$CurrentStatus.workflow_state
                 }                
                 { @("created","importing") -contains $_} {  
-                    Write-Verbose ("Current status is {0}" -f $CurrentStatus.workflow_state)
+                    Write-Verbose ("Current status is {0}, progress:{1}" -f $CurrentStatus.workflow_state,$CurrentStatus.progress)
                     Start-Sleep -Seconds $SleepSeconds
                     Invoke-CanvasSisMonitor -SisJobId $SisJobId -TokenFilePath $TokenFilePath -MaxIterations $MaxIterations -PreviousIterations $PreviousIterations -SleepSeconds $SleepSeconds
                 }
@@ -1874,6 +1924,93 @@ function Invoke-CanvasSisMonitor {
     return $FinalMsg
 }
 
+function Invoke-CanvasReportMonitor {
+    <#
+    .SYNOPSIS
+    Canvas SIS Monitor - Recursive
+    #>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$ReportJobId
+        
+        ,[Parameter(Mandatory=$true)]
+        [string]$ReportName
+
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+
+        ,[Parameter(Mandatory=$false)]
+        [int32]$MaxIterations = 15
+
+        ,[Parameter(Mandatory=$false)]
+        [int32]$PreviousIterations = 0
+
+        ,[Parameter(Mandatory=$false)]
+        [int32]$SleepSeconds = 30
+    )
+    $FinalMsg = ""
+    $FinalStatus = ""
+    try {
+        $PreviousIterations++
+        if ($PreviousIterations -le $MaxIterations){
+            Write-Verbose ("Monitor check of report job {0} number {1}" -f $ReportJobId,$PreviousIterations.ToString())
+            $CurrentStatus = Get-CanvasReportStatus -ReportName $ReportName -ReportId $ReportJobId -TokenFilePath $TokenFilePath
+            switch ($CurrentStatus.status) {                
+                { @("complete") -contains $_} {  
+                    Write-Verbose ("Report status is {0}" -f $CurrentStatus.status)
+                    $FinalStatus = $CurrentStatus.status
+                    $FinalMsg = $CurrentStatus
+                }
+                { @("error") -contains $_} { 
+                    $FinalStatus = $CurrentStatus.status
+                    $FinalMsg = "Report job {0} failed with message:{1}" -f $ReportJobId,$CurrentStatus.parameters.extra_text
+                    Write-Verbose $FinalMsg
+                }    
+                { @("created") -contains $_} {  
+                    Write-Verbose ("Current status is {0}" -f $CurrentStatus.status)
+                    Start-Sleep -Seconds $SleepSeconds
+                    $ReMonitor = @{
+                        ReportJobId = $ReportJobId
+                        ReportName = $ReportName
+                        TokenFilePath = $TokenFilePath
+                        MaxIterations = $MaxIterations
+                        PreviousIterations = $PreviousIterations
+                        SleepSeconds = $SleepSeconds
+                    }
+                    Invoke-CanvasReportMonitor @ReMonitor
+                }
+                Default {
+                    Write-Verbose ("Current status is {0}" -f $CurrentStatus.status)
+                    Start-Sleep -Seconds $SleepSeconds
+                    $ReMonitor = @{
+                        ReportJobId = $ReportJobId
+                        ReportName = $ReportName
+                        TokenFilePath = $TokenFilePath
+                        MaxIterations = $MaxIterations
+                        PreviousIterations = $PreviousIterations
+                        SleepSeconds = $SleepSeconds
+                    }
+                    Invoke-CanvasReportMonitor @ReMonitor
+                    <#
+                    $FinalStatus = "error"
+                    $FinalMsg =  "Unhandled workflow state, {1}, for job {0}" -f $ReportJobId,$CurrentStatus.status
+                    #>
+                }
+            }
+        }
+        else {
+            $FinalMsg = "Max job monitor checks reached"
+        }
+    }
+    catch {
+        $FinalStatus = "error"
+        $FinalMsg = "Error monitoring state for report job {0}" -f $SisJobId
+        Write-Verbose $_
+        Write-Verbose $_.ScriptStackTrace
+    }
+    return @{status=$FinalStatus;message=$FinalMsg}
+}
 function Start-CanvasSisJobMonitor {
     <#
     .SYNOPSIS 
@@ -1889,8 +2026,11 @@ function Start-CanvasSisJobMonitor {
 
         ,[Parameter(Mandatory=$false)]
         [int32]$MaxIterations = 10
+
+        ,[Parameter(Mandatory=$false)]
+        [int32]$SleepSeconds = 60
     )
-    $SisJobMonResult = Invoke-CanvasSisMonitor -SisJobId $SisJobId -TokenFilePath $TokenFilePath -MaxIterations $MaxIterations
+    $SisJobMonResult = Invoke-CanvasSisMonitor -SisJobId $SisJobId -TokenFilePath $TokenFilePath -MaxIterations $MaxIterations -SleepSeconds $SleepSeconds
     return $SisJobMonResult
 }
 
