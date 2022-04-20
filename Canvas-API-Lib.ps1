@@ -541,7 +541,7 @@ function Get-CanvasCourseSections {
         [string]$TokenFilePath
     )
     $CourseUrl = "https://{0}/api/v1/courses/{1}/sections" -f $global:CanvasSite,$CanvasCourse
-    $CourseData = Get-CanvasItem -CanvasApiUrl $CourseUrl -TokenFilePath $TokenFilePath
+    $CourseData = Get-CanvasItemList -CanvasApiUrl $CourseUrl -PerPage 100 -TokenFilePath $TokenFilePath
     return $CourseData    
 }
 
@@ -941,7 +941,7 @@ function New-InstructorSandbox {
         [string]$TokenFilePath,
 
         [Parameter(Mandatory=$false)]
-        [string]$CourseSource = "sis_course_id:TPL-Empty"
+        [string]$CourseSource = ""
     )
         
     # retrieve user info
@@ -972,17 +972,20 @@ function New-InstructorSandbox {
             Write-Verbose "Creating new practice course"
             $NewCourseResult = New-CanvasCourse @CourseParams
             $NewCourseId = $NewCourseResult.id
-            <# exclude template copy until one is developed
-            # copy from a template into the course
-            $CourseCopyParams = @{
-                "CourseSource"     = "$CourseSource"
-                "CourseDestination"= $NewCourseId
-                "TokenFilePath"    = $TokenFilePath
+            
+            # exclude template copy by default; will use sub account settings
+            # however, copy from a template into the course if one is specified
+            if ($CourseSource -ne ""){
+                $CourseCopyParams = @{
+                    "CourseSource"     = "$CourseSource"
+                    "CourseDestination"= $NewCourseId
+                    "TokenFilePath"    = $TokenFilePath
+                }
+                $CopyStatus = New-CanvasCourseCopy @CourseCopyParams
+                $StatusUrl = $CopyStatus.progress_url
+                Write-Verbose "monitor copy status at $StatusUrl"
             }
-            $CopyStatus = New-CanvasCourseCopy @CourseCopyParams
-            $StatusUrl = $CopyStatus.progress_url
-            Write-Verbose "monitor copy status at $StatusUrl"
-            #>
+            
             # enroll the instructor
             $EnrollParams = @{
                 CanvasCourse  = $NewCourseId
