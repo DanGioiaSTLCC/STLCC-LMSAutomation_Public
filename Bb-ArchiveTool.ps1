@@ -1,3 +1,8 @@
+<#
+.SYNOPSIS
+PowerShell with Windows Presentation Framework UI to look at parts of a Blackboard course archive file.  
+You will need to expand the zip file and add that folder to the empty text input box and hit load manifest to start
+#>
 Add-Type -AssemblyName PresentationFramework
 [string]$script:WorkingDirectory = ""
 [string]$script:ManifestPath = ""
@@ -26,28 +31,30 @@ Add-Type -AssemblyName PresentationFramework
 
         <Label Content="Data" HorizontalAlignment="Left" Margin="10,154,0,-63" Grid.Row="1" VerticalAlignment="Top" Height="36"/>
         <TextBlock x:Name="statusMsg" Grid.Column="1" HorizontalAlignment="Left" Margin="258,20,-292,0" TextWrapping="Wrap" Text="Status Messages" VerticalAlignment="Top" Height="112" Grid.RowSpan="2" Width="235"/>
-        <Button Content="Clear" Grid.Column="1" HorizontalAlignment="Left" Margin="71,131,0,-28" Grid.Row="1" VerticalAlignment="Top" Width="75"/>
+        <Button x:Name="btnClear" Content="Clear" Grid.Column="1" HorizontalAlignment="Left" Margin="71,131,0,-28" Grid.Row="1" VerticalAlignment="Top" Width="75"/>
+        
         <TabControl HorizontalAlignment="Left" Height="291" Margin="10,190,-407,-351" Grid.Row="1" VerticalAlignment="Top" Width="1207" Grid.ColumnSpan="2">
-            <TabItem Header="Course Info">
+            <TabItem Header="Course Info" Name="tabCourseInfo">
                 <TextBox Name="CourseInfo"
                 TextWrapping="Wrap"
                 AcceptsReturn="True"
                 VerticalScrollBarVisibility="Visible"
                 ></TextBox>
             </TabItem>
-            <TabItem Header="Users">
+            <TabItem Header="Users" Name="tabUsers">
                 <DataGrid Name="DatagridPeople" AutoGenerateColumns="True">
                     <DataGrid.Columns>
                         <DataGridTextColumn Header="Username" Binding="{Binding USERNAME}"/>
                         <DataGridTextColumn Header="Database ID" Binding="{Binding ID}"/>
                         <DataGridTextColumn Header="Person Key" Binding="{Binding BATCHUID}"/>
+                        <DataGridTextColumn Header="Role" Binding="{Binding COURSEROLE}"/>
                         <DataGridTextColumn Header="First Name" Binding="{Binding GIVEN}"/>
                         <DataGridTextColumn Header="Last Name" Binding="{Binding FAMILY}"/>
                         <DataGridTextColumn Header="Email Address" Binding="{Binding EMAIL}"/>
                     </DataGrid.Columns>
                 </DataGrid>
             </TabItem>
-            <TabItem Header="Grades">
+            <TabItem Header="Grades" Name="tabGradeHistory">
                 <DataGrid Name="DatagridGrades">
                     <DataGrid.Columns>
                         <DataGridTextColumn Header="Grade" Binding="{Binding GRADE}"/>
@@ -70,18 +77,20 @@ Add-Type -AssemblyName PresentationFramework
                     </DataGrid.Columns>
                 </DataGrid>
             </TabItem>
-            <TabItem Header="Grade Columns">
-                <DataGrid Name="DatagridGrades">
+            <TabItem Header="Grade Columns" Name="tabGradeColumns">
+                <DataGrid Name="DatagridGradeColumns">
                     <DataGrid.Columns>
                         <DataGridTextColumn Header="Outcome ID" Binding="{Binding GRADABLE_ITEM_ID}"/>
                         <DataGridTextColumn Header="Grading Period" Binding="{Binding GRADING_PERIODID}"/>
                         <DataGridTextColumn Header="Title" Binding="{Binding TITLE}"/>
                         <DataGridTextColumn Header="Display Title" Binding="{Binding DISPLAY_TITLE}"/>
+                        <DataGridTextColumn Header="Description" Binding="{Binding DESCRIPTION}"/>
                         <DataGridTextColumn Header="External Ref" Binding="{Binding EXTERNALREF}"/>
                         <DataGridTextColumn Header="Handle" Binding="{Binding HANDLERURL}"/>
                         <DataGridTextColumn Header="Weight" Binding="{Binding WEIGHT}"/>
                         <DataGridTextColumn Header="Points Possible" Binding="{Binding POINTSPOSSIBLE}"/>
                         <DataGridTextColumn Header="Multiple Attempts" Binding="{Binding MULTIPLEATTEMPTS}"/>
+                        <DataGridTextColumn Header="Formulation" Binding="{Binding FORMULATION}"/>
                     </DataGrid.Columns>
                 </DataGrid>
             </TabItem>        
@@ -97,10 +106,17 @@ $inputUser = $window.FindName("txtUsername")
 $manifestButton = $window.FindName("btnManifest")
 $userButton = $window.FindName("btnUserInfo")
 $gradesButton = $window.FindName("btnGradesForUser")
+$gradeColumnsButton = $window.FindName("btnGradeColumns")
+$clearButton = $window.FindName("btnClear")
 $statusBlock = $window.FindName("statusMsg")
 $DataOutputGrades = $window.FindName("DatagridGrades")
 $DataOutputPeople = $window.FindName("DatagridPeople")
+$DataOutputColumns = $window.FindName("DatagridGradeColumns")
 $DataOutputCourseInfo = $window.FindName("CourseInfo")
+$TabGradeColumns = $window.FindName("tabGradeColumns")
+$TabGradeHistory = $window.FindName("tabGradeHistory")
+$tabUsers = $window.FindName("tabUsers")
+$tabCourseInfo = $window.FindName("tabCourseInfo")
 
 $manifestButton.Add_Click({
     $script:WorkingDirectory = $inputDir.Text
@@ -119,7 +135,7 @@ $manifestButton.Add_Click({
             $Msg += "`n Users:$($UserInfo.file)"
             $Msg += "`n Enroll:$($Memberships.file)"
             $Msg += "`n Grades:$($gradebook.file)"
-            $statusBlock.Text = $Msg
+            #$statusBlock.Text = $Msg
             $Msg += "`n-------------------"
             $Msg += "`n Course ID:$($CourseInfo.node.COURSEID.value)"
             $Msg += "`n Course Name:$($CourseInfo.node.TITLE.value)"
@@ -128,7 +144,7 @@ $manifestButton.Add_Click({
             $Msg += "`n Open: $($CourseInfo.node.DATES.COURSESTART.value)"
             $Msg += "`n Close: $($CourseInfo.node.DATES.COURSEEND.value)"
             $DataOutputCourseInfo.Text = $Msg
-            $DataOutputCourseInfo.Focus()
+            $tabCourseInfo.IsSelected = $true;
         }
         else {
             $statusBlock.Text = "manifest not found in $script:WorkingDirectory"
@@ -143,10 +159,14 @@ $userButton.Add_Click({
     if (Test-Path $script:ManifestPath){
         $ManifestResources = Select-Xml -Path "$script:ManifestPath" -XPath "/manifest/resources"
         $UserFileInfo = $ManifestResources.node.resource | Where-Object{$_."type" -eq 'course/x-bb-user'}
+        $Memberships = $ManifestResources.node.resource | Where-Object{$_."type" -eq 'membership/x-bb-coursemembership'}
         $UserData = Select-Xml -Path "$script:WorkingDirectory\$($UserFileInfo.file)" -XPath "/USERS"
+        $MembershipData = select-xml -Path "$script:WorkingDirectory\$($Memberships.file)" -XPath "/COURSEMEMBERSHIPS"
         foreach ($Person in $UserData.Node.USER){
+            $MemberInfo = $MembershipData.Node.COURSEMEMBERSHIP|Where-Object{$_.USERID.value -eq $Person.id}
             $DataOutputPeople.AddChild([pscustomobject]@{
                 USERNAME = $Person.USERNAME.value;
+                COURSEROLE = $MemberInfo.ROLE.value;
                 ID = $Person.id;
                 BATCHUID = $Person.BATCHUID.value;
                 GIVEN = $Person.NAMES.GIVEN.value;
@@ -155,6 +175,7 @@ $userButton.Add_Click({
             })
         }
         $statusBlock.Text = "finished outputing users"
+        $tabUsers.IsSelected = $true;
     }
     else {
         $statusBlock.Text = "mainfest not found, add path and load the manifest first"
@@ -194,12 +215,46 @@ $gradesButton.Add_Click({
                 })
             }
             $statusBlock.Text = "finished outputing grades"
+            $TabGradeHistory.IsSelected = $true;
         }
     }
     else {
         $statusBlock.Text = "mainfest not found, add path and load the manifest first"
     }    
 })
+
+$gradeColumnsButton.Add_Click({
+    if (Test-Path $script:ManifestPath){
+        $ManifestResources = Select-Xml -Path "$script:ManifestPath" -XPath "/manifest/resources"
+        $GradebookFile = $ManifestResources.node.resource|Where-Object{$_."type" -eq 'course/x-bb-gradebook'}
+        $GradebookData = Select-Xml -Path "$script:WorkingDirectory\$($GradebookFile.file)" -XPath "/GRADEBOOK"
+        $GradeColumns = $GradebookData.Node.OUTCOMEDEFINITIONS.OUTCOMEDEFINITION
+        foreach ($GradeColumn in $GradeColumns){
+            $Formula = $GradebookData.Node.FORMULAE.FORMULA|Where-Object{$_.GRADABLE_ITEM_ID.value -eq $GradeColumn.id}
+            $DataOutputColumns.AddChild([pscustomobject]@{
+                GRADABLE_ITEM_ID = $GradeColumn.id;
+                TITLE =  $GradeColumn.Title.Value;
+                DISPLAY_TITLE = $GradeColumn.DISPLAY_TITLE.value;
+                DESCRIPTION = $GradeColumn.DESCRIPTION.TEXT
+                EXTERNALREF = $GradeColumn.EXTERANLREF.value;
+                HANDLERURL = $GradeColumn.HANDLERURL.value;
+                WEIGHT = $GradeColumn.WEIGHT.value;
+                POINTSPOSSIBLE = $GradeColumn.POINTSPOSSIBLE.value;
+                MULTIPLEATTEMPTS = $GradeColumn.MULTIPLEATTEMPTS.value;
+                FORMULATION = $Formula.JSON_TEXT;
+            })
+        }
+        $TabGradeColumns.IsSelected = $true;
+    }
+    else {
+        $statusBlock.Text = "mainfest not found, add path and load the manifest first"
+    }    
+})
+
+$clearButton.Add_Click({
+    $statusBlock.Text = "button not configured yet"
+})
+
 # display the WPF window
 $window.ShowDialog()
 
