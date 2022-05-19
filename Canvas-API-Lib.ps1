@@ -3,7 +3,7 @@
 Canvas REST API classes and functions as well as integration upload
 All functions tested against PowerShell 7 only
 Most if not all functions included assume the token is or will be stored in a secure string file
-Set VerbosePreference equal to Continue to ready any console output
+Set VerbosePreference equal to Continue to read any console output
 
 .DESCRIPTION
 Canvas tokens can be retrieved by running Get-CanvasTokenString
@@ -561,16 +561,22 @@ function New-CanvasCourse {
         [string]$TermId,
 
         [Parameter(Mandatory=$false)]
-        [string]$SelfEnroll = $false,
+        [bool]$SelfEnroll = $false,
         
         [Parameter(Mandatory=$false)]
         [string]$CourseFormat = "",
 
         [Parameter(Mandatory=$false)]
-        [string]$PublishImmediately = $false,
+        [bool]$PublishImmediately = $false,
 
         [Parameter(Mandatory=$false)]
         [string]$CourseAccount = "self",
+
+        [Parameter(Mandatory=$false)]
+        [string]$StartDate = "",
+
+        [Parameter(Mandatory=$false)]
+        [string]$EndDate = "",
 
         [Parameter(Mandatory=$true)]
         [string]$TokenFilePath        
@@ -586,10 +592,15 @@ function New-CanvasCourse {
         course_code = $CourseNameShort
         term_id = "sis_term_id:{0}" -f $TermId
         sis_course_id = $CourseRef
-        offer = $PublishImmediately.ToString()
     }
+    if ($PublishImmediately){$Course.Add("offer","true")}
     if ($SelfEnroll){$Course.Add("self_enrollment","true")}
     if ($CourseFormat -ne ""){$Course.Add("course_format" ,$CourseFormat)}
+    if ($StartDate -ne ""){
+        $Course.Add("start_at",$StartDate)
+        $Course.Add("restrict_enrollments_to_course_dates","true")
+    }
+    if ($EndDate -ne ""){$Course.Add("end_at",$EndDate)}
     $CourseBody = @{"course"= $Course}
     $CourseBodyParts = ConvertTo-Json $CourseBody
     $NewCourse = Send-CanvasUpdate -CanvasApiUrl $CourseUrl -RequestBody $CourseBodyParts -TokenFilePath $TokenFilePath
@@ -1570,7 +1581,7 @@ function Get-CanvasTerms {
     )
     # GET /api/v1/accounts/:account_id/terms
     $TermsUrl = "https://{0}/api/v1/accounts/{1}/terms" -f $global:CanvasSite,$Account
-    $TermList = Get-CanvasItemList -CanvasApiUrl $TermsUrl -TokenFilePath $TokenFilePath
+    $TermList = Get-CanvasItemList -CanvasApiUrl $TermsUrl -TokenFilePath $TokenFilePath -PerPage 100
     return $TermList.enrollment_terms
 }
 Set-Alias -Name Get-CanvasCourseTerms -Value Get-CanvasTerms
