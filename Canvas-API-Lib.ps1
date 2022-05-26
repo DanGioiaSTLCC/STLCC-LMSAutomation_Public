@@ -612,7 +612,8 @@ function New-CanvasMembership {
     .Synopsis 
     Add course enrollment to Canvas.  use sis_login_id: prefix for person's username
     .Parameter CanvasCourse
-    identifier for Canvas course.  user sis_course_id: prefix to use the SIS id for the course.  otherwise, you will need the integeger from the course url.
+    identifier for Canvas course.  user sis_course_id: prefix to use the SIS id for the course.  
+    otherwise, you will need the integeger from the course url.
     .Parameter CanvasUser
     user identifier.  use one of the SIS prefixes or you will need the integer id from the user's properties url
     AD username prefix      = sis_login_id:
@@ -624,6 +625,8 @@ function New-CanvasMembership {
     use PowerShell boolean value when splatting
     .Parameter TokenFilePath
     path of the file containing the token text stored as a secure string
+    .Parameter Section
+    section identifier (optional).  non database id prefix is sis_section_id:
     #>
     [CmdletBinding()]
     param (
@@ -640,7 +643,10 @@ function New-CanvasMembership {
         [switch]$Notify,
 
         [Parameter(Mandatory=$true)]
-        [string]$TokenFilePath
+        [string]$TokenFilePath,
+
+        [Parameter(Mandatory=$false)]
+        [string]$Section=""
     )
     <#
     types: StudentEnrollment, TeacherEnrollment, TaEnrollment, ObserverEnrollment, DesignerEnrollment
@@ -661,6 +667,7 @@ function New-CanvasMembership {
     }
     # add notify if set
     if ($Notify){$Enrollment.Add("notify","true")}
+    if ($Section -ne ""){$Enrollment.Add("course_section_id",$Section)}
     $EnrollmentBody = @{"enrollment"= $Enrollment}
     $EnrollmentBodyParts = ConvertTo-Json $EnrollmentBody
     $NewEnrollment = Send-CanvasUpdate -CanvasApiUrl $EnrollmentUrl -RequestBody $EnrollmentBodyParts -TokenFilePath $TokenFilePath    
