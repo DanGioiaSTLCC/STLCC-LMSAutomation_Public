@@ -111,6 +111,22 @@ function Get-CanvasSisSshaPasswordText {
     return $SisPw
 }
 
+function Get-NewPasswordText {
+	Param ([uint16]$intPasswordLength)
+	# init return string
+	$PasswordText = ""
+
+	for ($i=0;$i -lt $intPasswordLength;$i++){
+		# mixed case      capital    lower       integer
+		$PasswordRange = (65..90) + (97..122) + (48..57)
+		# select random number from the range(s)
+		[uint16]$PasswordPath = Get-Random -InputObject $PasswordRange
+		# add the random character to the return string
+		[string]$PasswordText += [char]($PasswordPath)
+	}
+	return $PasswordText
+}
+
 function Get-IsoDate {
     [CmdletBinding()]
     param (
@@ -502,6 +518,36 @@ function Update-CanvasUserEmail {
     $userParts = @{user = @{ email = $EmailAddress}} | ConvertTo-Json
     $UserUrl = "https://{0}/api/v1/users/{1}" -f $global:CanvasSite,$UserId
     Send-CanvasUpdate -CanvasApiUrl $UserUrl -RequestBody $userParts -ApiVerb "PUT" -TokenFilePath $TokenFilePath
+}
+
+function Update-CanvasCourseSisId {
+    <#
+    .SYNOPSIS
+    update a course's SIS ID
+    #>
+    [CmdletBinding()]
+    param (
+        # Existing course ID (use sis_course_id: prefix for existing SIS Course ID)
+        [Parameter(Mandatory=$true)]
+        [string]$CourseId,
+
+        # New course SIS ID
+        [Parameter(Mandatory=$true)]
+        [string]$NewCourseId,
+
+        # path of the file containing the token text stored as a secure string
+        [Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    $CourseUrl = "https://{0}/api/v1/courses/{1}" -f $global:CanvasSite,$CourseId
+    $UpdatePart = @{course = @{sis_course_id = $NewCourseId}}|ConvertTo-Json
+    $UpdateArgs = @{
+        CanvasApiUrl = $CourseUrl
+        RequestBody = $UpdatePart
+        ApiVerb = "PUT"
+        TokenFilePath = $TokenFilePath
+    }
+    Send-CanvasUpdate @UpdateArgs
 }
 function Get-CanvasCourse {
     [CmdletBinding()]
@@ -1048,7 +1094,13 @@ function New-DeveloperCourseShell {
         [string]$TokenFilePath,
 
         [Parameter(Mandatory=$false)]
-        [string]$CourseSource = ""
+        [string]$CourseSource = "",
+        
+        [Parameter(Mandatory=$false)]
+        [bool]$CoDevelopment = $false,
+
+        [Parameter(Mandatory=$false)]
+        [string]$OtherInstructors
     )
         
     # retrieve user info
@@ -1057,7 +1109,9 @@ function New-DeveloperCourseShell {
         # Build course details    
         if ($CourseSuffix -ne ""){$CourseSuffix = " " + $CourseSuffix.Replace(" ","")}
         $CourseName = "Development Course {0} {1}" -f $UserData.short_name,$CourseSuffix
+        if ($CoDevelopment){$CourseName = "Development Course {0} {1}" -f "Shared",$CourseSuffix}
         $CourseNameShort = "Development {0}{1}" -f $InstructorUsername,$CourseSuffix
+        if ($CoDevelopment){$CourseNameShort = "Development {0} {1}" -f "Shared",$CourseSuffix}
         $IdSuffix = $CourseSuffix.Replace(" ","_")
         $CourseId = "DEV-" + $InstructorUsername + $IdSuffix
         $CourseParams = @{
@@ -1083,6 +1137,21 @@ function New-DeveloperCourseShell {
             }        
             $NewEnrollment = New-CanvasMembership @EnrollParams
             Write-Verbose ("New Enrollment ID: {0}|{1} in {2}" -f $NewEnrollment.id,$NewEnrollment.role,$NewEnrollment.sis_course_id)
+            if ($CoDevelopment -and ($OtherInstructors -ne "")){
+                Write-Verbose "Adding CoDevelopers"
+                $OtherList = $OtherInstructors.Split(',')
+                foreach ($otherInstructor in $OtherList){
+                    $EnrollParams = @{
+                        CanvasCourse  = $NewCourseId
+                        CanvasUser    = "sis_login_id:{0}" -f $otherInstructor
+                        CourseRole    = "TeacherEnrollment"
+                        Notify        = $True
+                        TokenFilePath = $TokenFilePath
+                    }        
+                    $NewEnrollment = New-CanvasMembership @EnrollParams
+                    Write-Verbose ("New Enrollment ID: {0}|{1} in {2}" -f $NewEnrollment.id,$NewEnrollment.role,$NewEnrollment.sis_course_id)                    
+                }
+            }
         }
         else {
             Write-Verbose "Course Creation of $CourseId failed"
@@ -2259,7 +2328,6 @@ function Set-CanvasCourseFormat {
     param (
         [Parameter(Mandatory=$true)]
         [string]$CourseId
-
         
         ,[Parameter(Mandatory=$false)]
         [string]$NewFormat = ""
