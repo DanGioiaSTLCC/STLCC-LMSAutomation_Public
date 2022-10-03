@@ -137,6 +137,16 @@ function Get-IsoDate {
     return $DateString.ToString()
 }
 
+function Get-LocalDate {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$DateInputString
+    )
+    $DateString = (Get-Date $DateInputString).ToLocalTime()
+    return $DateString.ToString()
+}
+
 function Send-CanvasUpdate {
     [CmdletBinding()]
     param (
@@ -692,7 +702,10 @@ function New-CanvasMembership {
         [string]$TokenFilePath,
 
         [Parameter(Mandatory=$false)]
-        [string]$Section=""
+        [string]$Section="",
+
+        [Parameter(Mandatory=$false)]
+        [string]$NewStatus="active"
     )
     <#
     types: StudentEnrollment, TeacherEnrollment, TaEnrollment, ObserverEnrollment, DesignerEnrollment
@@ -982,185 +995,6 @@ function Set-CanvasCourseSelfenroll {
     Send-CanvasUpdate -CanvasApiUrl $CourseUpdateUrl -ApiVerb "PUT" -RequestBody $updateBody -TokenFilePath $TokenFilePath
 }
 
-function New-InstructorSandbox {
-    <#
-    .Synopsis
-    creates a new Instructor Sandbox course, enrolls instructor, copies template, notifies instructor
-
-    .Parameter TokenFilePath
-    path to the secure string file containing the encrypted Canvas user token
-    #>
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory=$true)]
-        [string]$InstructorUsername,
-        
-        [Parameter(Mandatory=$false)]
-        [string]$AlternateEmail,
-        
-        [Parameter(Mandatory=$false)]
-        [string]$CourseSuffix="",
-
-        [Parameter(Mandatory=$true)]
-        [string]$TokenFilePath,
-
-        [Parameter(Mandatory=$false)]
-        [string]$CourseSource = ""
-    )
-        
-    # retrieve user info
-    Write-Verbose "Getting User Info."
-    $UserData = Get-CanvasUserByLogin $InstructorUsername -TokenFilePath $TokenFilePath
-    if ($UserData.count -eq 1){    
-        # Build course details    
-        if ($CourseSuffix -ne ""){$CourseSuffix = " " + $CourseSuffix.Replace(" ","")}
-        $CourseName = "Practice Course {0} {1}" -f $UserData.short_name,$CourseSuffix
-        $CourseNameShort = "Practice {0}" -f $InstructorUsername
-        $IdSuffix = $CourseSuffix.Replace(" ","_")
-        $CourseId = "PRA_" + $InstructorUsername + $IdSuffix
-        # course check
-        Write-Verbose "Checking for existing practice course"
-        $CourseCheck = Get-CanvasCourseByCRN -CanvasCrn $CourseId -TokenFilePath $TokenFilePath
-        if ($CourseCheck.count -eq 1){
-            Write-Verbose "Course with SIS ID $CourseId already exists."
-        } else {
-            $CourseParams = @{
-                CourseNameLong     = $CourseName.Trim()
-                CourseNameShort    = $CourseNameShort
-                CourseRef          = $CourseId
-                TermId             = "schooltrn"
-                PublishImmediately = $false
-                CourseAccount      = "prac"
-                TokenFilePath      = $TokenFilePath
-            }
-            Write-Verbose "Creating new practice course"
-            $NewCourseResult = New-CanvasCourse @CourseParams
-            $NewCourseId = $NewCourseResult.id
-            
-            # exclude template copy by default; will use sub account settings
-            # however, copy from a template into the course if one is specified
-            if ($CourseSource -ne ""){
-                $CourseCopyParams = @{
-                    "CourseSource"     = "$CourseSource"
-                    "CourseDestination"= $NewCourseId
-                    "TokenFilePath"    = $TokenFilePath
-                }
-                $CopyStatus = New-CanvasCourseCopy @CourseCopyParams
-                $StatusUrl = $CopyStatus.progress_url
-                Write-Verbose "monitor copy status at $StatusUrl"
-            }
-            
-            # enroll the instructor
-            $EnrollParams = @{
-                CanvasCourse  = $NewCourseId
-                CanvasUser    = "sis_login_id:{0}" -f $InstructorUsername
-                CourseRole    = "TeacherEnrollment"
-                Notify        = $false
-                TokenFilePath = $TokenFilePath
-            }
-            Write-Verbose "Adding instructor to course"
-            $NewEnrId = New-CanvasMembership @EnrollParams
-            Write-Verbose "New Enrollment ID: $NewEnrId"
-        }
-    }
-    else {
-        Write-Verbose "instructor with login $InstructorUsername not found"
-    }    
-}
-
-function New-DeveloperCourseShell {
-    <#
-    .Synopsis
-    creates a new Development course, enrolls instructor, copies template, notifies instructor
-
-    .Parameter InstructorUsername
-    login id (username) of instructor for whom to create the development course shell
-
-    .Parameter CourseSuffix
-    extra information to ID the course shell, examples: BIO207,BIO207-8
-
-    .Parameter TokenFilePath
-    path to the secure string file containing the encrypted Canvas user token
-    #>
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory=$true)]
-        [string]$InstructorUsername,
-        
-        [Parameter(Mandatory=$false)]
-        [string]$CourseSuffix="",
-
-        [Parameter(Mandatory=$true)]
-        [string]$TokenFilePath,
-
-        [Parameter(Mandatory=$false)]
-        [string]$CourseSource = "",
-        
-        [Parameter(Mandatory=$false)]
-        [bool]$CoDevelopment = $false,
-
-        [Parameter(Mandatory=$false)]
-        [string]$OtherInstructors
-    )
-        
-    # retrieve user info
-    $UserData = Get-CanvasUserByLogin $InstructorUsername -TokenFilePath $TokenFilePath
-    if ($UserData.count -eq 1){
-        # Build course details    
-        if ($CourseSuffix -ne ""){$CourseSuffix = " " + $CourseSuffix.Replace(" ","")}
-        $CourseName = "Development Course {0} {1}" -f $UserData.short_name,$CourseSuffix
-        if ($CoDevelopment){$CourseName = "Development Course {0} {1}" -f "Shared",$CourseSuffix}
-        $CourseNameShort = "Development {0}{1}" -f $InstructorUsername,$CourseSuffix
-        if ($CoDevelopment){$CourseNameShort = "Development {0} {1}" -f "Shared",$CourseSuffix}
-        $IdSuffix = $CourseSuffix.Replace(" ","_")
-        $CourseId = "DEV-" + $InstructorUsername + $IdSuffix
-        $CourseParams = @{
-            CourseNameLong      = $CourseName.Trim()
-            CourseNameShort     = $CourseNameShort
-            CourseRef           = $CourseId
-            TermId              = "default"
-            CourseAccount       = "schooldev"
-            PublishImmediately  = $false
-            TokenFilePath       = $TokenFilePath
-        }
-        $NewCourseResult = New-CanvasCourse @CourseParams
-        if ($NewCourseResult) {
-            $NewCourseId = $NewCourseResult.id
-            Write-Verbose ("New Course: {0}|{1}" -f $NewCourseId,$NewCourseResult.sis_course_id)
-            # enroll the instructor
-            $EnrollParams = @{
-                CanvasCourse  = $NewCourseId
-                CanvasUser    = "sis_login_id:{0}" -f $InstructorUsername
-                CourseRole    = "TeacherEnrollment"
-                Notify        = $True
-                TokenFilePath = $TokenFilePath
-            }        
-            $NewEnrollment = New-CanvasMembership @EnrollParams
-            Write-Verbose ("New Enrollment ID: {0}|{1} in {2}" -f $NewEnrollment.id,$NewEnrollment.role,$NewEnrollment.sis_course_id)
-            if ($CoDevelopment -and ($OtherInstructors -ne "")){
-                Write-Verbose "Adding CoDevelopers"
-                $OtherList = $OtherInstructors.Split(',')
-                foreach ($otherInstructor in $OtherList){
-                    $EnrollParams = @{
-                        CanvasCourse  = $NewCourseId
-                        CanvasUser    = "sis_login_id:{0}" -f $otherInstructor
-                        CourseRole    = "TeacherEnrollment"
-                        Notify        = $True
-                        TokenFilePath = $TokenFilePath
-                    }        
-                    $NewEnrollment = New-CanvasMembership @EnrollParams
-                    Write-Verbose ("New Enrollment ID: {0}|{1} in {2}" -f $NewEnrollment.id,$NewEnrollment.role,$NewEnrollment.sis_course_id)                    
-                }
-            }
-        }
-        else {
-            Write-Verbose "Course Creation of $CourseId failed"
-        }
-    }
-    else {
-        Write-Verbose "instructor with login $InstructorUsername not found"
-    }
-}
 
 function Get-CanvasGraphQLResults {
     <#
@@ -1907,19 +1741,19 @@ function Get-CurrentTermCode {
     $m = $nowstamp.Month
     $y = $nowstamp.Year
     switch ($m){
-        {@("1","01") -contains $_} {
+        1{
             $tc = "10"
         }
-        {@("2", "02") -contains $_} {
+        2{
             $tc = "10"
         }
-        {@("3", "03") -contains $_} {
+        3{
             $tc = "10"
         }
-        {@("4", "04") -contains $_} {
+        4{
             $tc = "10"
         }
-        {@("5", "05") -contains $_} {
+        5{
             if ($nowstamp.Day -gt 10){
                 $tc = "20"
             }
@@ -1927,25 +1761,25 @@ function Get-CurrentTermCode {
                 $tc = "10"
             }
         }
-        {@("6","06") -contains $_} {
+        6{
             $tc = "20"
         }
-        {@("7","07") -contains $_} {
+        7{
             $tc = "20"
         }
-        {@("8", "08") -contains $_} {
+        8{
             $tc = "30"
         }
-        {@("9", "09") -contains $_} {
+        9{
             $tc = "30"
         }
-        "10"{
+        10{
             $tc = "30"
         }
-        "11"{
+        11{
             $tc = "30"
         }
-        "12"{
+        12{
             if ($nowstamp.Day -gt 20){
                 $y++
                 $tc = "10"
@@ -2176,29 +2010,7 @@ function Set-CanvasCourseTabVisibility {
 
 }
 
-function New-InstructorTrainingMembership {
-[CmdletBinding()]
-param (
-    [Parameter(Mandatory=$true)]
-    [string]$CanvasUsername
-    
-    ,[Parameter(Mandatory=$false)]
-    [string]$CanvasCourse="sis_course_id:TRN-OE-FacCert"
 
-    ,[Parameter(Mandatory=$true)]
-    [string]$TokenFilePath    
-)
-    [string]$CanvasUserSpecifier = "sis_login_id:{0}" -f $CanvasUsername
-    $EnrParams = @{
-        CanvasCourse = $CanvasCourse
-        CanvasUser = $CanvasUserSpecifier
-        CourseRole = "student"
-        Notify = $false
-        TokenFilePath = $TokenFilePath
-    }
-    $EnrollmentResult = New-CanvasMembership @EnrParams
-    return $EnrollmentResult
-}
 
 function Set-AllyConfigVisibilityAdmin {
     [CmdletBinding()]
@@ -2268,6 +2080,9 @@ function New-CanvasCourseSection {
         ,[Parameter(Mandatory=$false)]
         [string]$EndDate=""
 
+        ,[Parameter(Mandatory=$false)]
+        [bool]$Restricted=$true
+
         ,[Parameter(Mandatory=$true)]
         [string]$TokenFilePath
     )
@@ -2290,6 +2105,9 @@ function New-CanvasCourseSection {
     if ($EndDate -ne ""){
         $EndDate = Get-IsoDate $EndDate
         $NewSectionData.course_section.add("end_at",$EndDate)
+    }
+    if ($Restricted){
+        $NewSectionData.course_section.add("restrict_enrollments_to_section_dates","true")
     }
     # format the data for upload
     $NewSectionBody = $NewSectionData|ConvertTo-Json
@@ -2390,6 +2208,134 @@ function Set-CanvasCourseTerm {
     return $CourseUpdateResult
 }
 
+function Remove-CanvasCoursePage {
+    [CmdletBinding()]
+    param (
+        # canvas course identifier, for crn use prefix sis_course_id:
+        [Parameter(Mandatory=$true)]
+        [string]$CourseId
+        
+        # page id or url of page to delete
+        ,[Parameter(Mandatory=$true)]
+        [string]$PageId
+
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    $ApiUrl = "https://{0}/api/v1/courses/{1}/pages/{2}" -f $global:CanvasSite,$CourseId,$PageId
+    # configure upload parameters
+    $NewDataParams = @{
+        CanvasApiUrl = $ApiUrl
+        ApiVerb = "DELETE"
+        TokenFilePath = $TokenFilePath
+    }
+    # send the update
+    Send-CanvasUpdate @NewDataParams
+}
+
+function Remove-CanvasCoursePages {
+    [CmdletBinding()]
+    param (
+        # canvas course identifier, for crn use prefix sis_course_id:
+        [Parameter(Mandatory=$true)]
+        [string]$CourseId
+
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    
+    $Pages = Get-CanvasCoursePages -CanvasCourse $CourseId -TokenFilePath $TokenFilePath
+    foreach ($Page in $Pages){
+        $ApiUrl = "https://{0}/api/v1/courses/{1}/pages/{2}" -f $global:CanvasSite,$CourseId,$Page.page_id
+        # configure upload parameters
+        $NewDataParams = @{
+            CanvasApiUrl = $ApiUrl
+            ApiVerb = "DELETE"
+            TokenFilePath = $TokenFilePath
+        }
+        # send the update
+        $result = Send-CanvasUpdate @NewDataParams
+        Write-Host "page deleted $($result.title)"
+    }
+}
+
+function Remove-CanvasCourseModules {
+    [CmdletBinding()]
+    param (
+        # canvas course identifier, for crn use prefix sis_course_id:
+        [Parameter(Mandatory=$true)]
+        [string]$CourseId
+
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    
+    $Modules = Get-CanvasCourseModules -CanvasCourse $CourseId -TokenFilePath $TokenFilePath
+    foreach ($Module in $Modules){
+        $ApiUrl = "https://{0}/api/v1/courses/{1}/modules/{2}" -f $global:CanvasSite,$CourseId,$Module.id
+        # configure upload parameters
+        $NewDataParams = @{
+            CanvasApiUrl = $ApiUrl
+            ApiVerb = "DELETE"
+            TokenFilePath = $TokenFilePath
+        }
+        # send the update
+        $result = Send-CanvasUpdate @NewDataParams
+        Write-Host "module deleted $($result.name)"
+    }
+}
+
+function Get-CanvasCourseAssignmentGroups {
+    [CmdletBinding()]
+    param (
+        # canvas course identifier, for crn use prefix sis_course_id:
+        [Parameter(Mandatory=$true)]
+        [string]$CourseId
+
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # route "https://stlcc.beta.instructure.com/api/v1/courses/sis_course_id:32952.202230/assignment_groups "
+    $ApiUrl = "https://{0}/api/v1/courses/{1}/assignment_groups?include=assignments" -f $global:CanvasSite,$CourseId
+    $AsgnGroupListParams = @{
+        "CanvasApiUrl" = $ApiUrl
+        "TokenFilePath" = $TokenFilePath
+    }
+    # call the requestor
+    Get-CanvasItemList @AsgnGroupListParams
+}
+
+function Remove-CanvasCourseAssignmentGroup {
+    [CmdletBinding()]
+    param (
+        # canvas course identifier, for crn use prefix sis_course_id:
+        [Parameter(Mandatory=$true)]
+        [string]$CourseId
+        
+        # canvas course identifier, for crn use prefix sis_course_id:
+        ,[Parameter(Mandatory=$true)]
+        [string]$AssignmentGroupId
+
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    $ApiUrl = "https://{0}/api/v1/courses/{1}/assignment_groups/{2}" -f $global:CanvasSite,$CourseId,$AssignmentGroupId
+    # configure upload parameters
+    $NewDataParams = @{
+        CanvasApiUrl = $ApiUrl
+        ApiVerb = "DELETE"
+        TokenFilePath = $TokenFilePath
+    }
+    # send the update
+    $result = Send-CanvasUpdate @NewDataParams
+    Write-Host "deleted assignment group '$($result.name)'"
+}
+
 <#
 function new-genericfunction {
     [CmdletBinding()]
@@ -2399,7 +2345,7 @@ function new-genericfunction {
         
         ,[Parameter(Mandatory=$false)]
         [string]$Optional=""
-
+        # path of the file containing the token text stored as a secure string
         ,[Parameter(Mandatory=$true)]
         [string]$TokenFilePath
     )
