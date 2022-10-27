@@ -463,6 +463,9 @@ function New-CanvasUser {
         [Parameter(Mandatory=$false)]
         [bool]$UseSaml=$true,
 
+        [Parameter(Mandatory=$false)]
+        [bool]$Notify=$false,
+
         [Parameter(Mandatory=$true)]
         [string]$TokenFilePath
     )
@@ -480,6 +483,12 @@ function New-CanvasUser {
     # add email address
     $comParts = @{
         address = $EmailAddress
+    }
+    # notify use if requested
+    if ($Notify){
+        # these two are recommended to be used together, see https://canvas.instructure.com/doc/api/users.html#method.users.create
+        $pseudonymParts.Add("send_confirmation",$true)
+        $comParts.Add("skip_confirmation",$true)
     }
     # combine user objects into one
     $UserObject = @{
@@ -707,29 +716,41 @@ function New-CanvasMembership {
         [Parameter(Mandatory=$false)]
         [string]$NewStatus="active"
     )
-    <#
-    types: StudentEnrollment, TeacherEnrollment, TaEnrollment, ObserverEnrollment, DesignerEnrollment
-    #>
-    
-    # control for role specifiers
-    if ($CourseRole.ToLower() -eq "student") {$CourseRole = "StudentEnrollment"}
-    if ($CourseRole.ToLower() -eq "builder"-or ($CourseRole.ToLower() -eq "designer")) {$CourseRole = "DesignerEnrollment"}
-    if (($CourseRole.ToLower() -eq "ta") -or ($CourseRole.ToLower() -eq "assistant")) {$CourseRole = "TaEnrollment"}
-    if (($CourseRole.ToLower() -eq "instructor") -or ($CourseRole.ToLower() -eq "teacher")) {$CourseRole = "TeacherEnrollment"}
     # build the route
     $EnrollmentUrl = "https://{0}/api/v1/courses/{1}/enrollments" -f $global:CanvasSite,$CanvasCourse
     # build the enrollment body
     $Enrollment = @{
         "user_id" = $CanvasUser
-        "type" = $CourseRole
         "enrollment_state" = "active"
+    }
+    # control for role specifiers
+    switch ($CourseRole.ToLower()) {
+        { @("student","stu","participant") -contains $_} { 
+            $CourseRole = "StudentEnrollment"
+            $Enrollment.Add("type",$CourseRole)
+        }
+        { @("builder","designer") -contains $_} { 
+            $CourseRole = "DesignerEnrollment"
+            $Enrollment.Add("type",$CourseRole)
+        }
+        { @("ta","assistant") -contains $_} { 
+            $CourseRole = "TaEnrollment"
+            $Enrollment.Add("type",$CourseRole)
+        }
+        { @("teacher","instructor","professor") -contains $_} { 
+            $CourseRole = "TeacherEnrollment"
+            $Enrollment.Add("type",$CourseRole)
+        }
+        { @("3","4","5","6","7","13","22","23","25","56") -contains $_} { 
+            $Enrollment.Add("role_id",$CourseRole)
+        }
+        Default {Write-Host "unrecognized role definition: $($CourseRole)";exit}
     }
     # add notify if set
     if ($Notify){$Enrollment.Add("notify","true")}
     if ($Section -ne ""){$Enrollment.Add("course_section_id",$Section)}
-    $EnrollmentBody = @{"enrollment"= $Enrollment}
-    $EnrollmentBodyParts = ConvertTo-Json $EnrollmentBody
-    $NewEnrollment = Send-CanvasUpdate -CanvasApiUrl $EnrollmentUrl -RequestBody $EnrollmentBodyParts -TokenFilePath $TokenFilePath    
+    $EnrollmentBody = @{"enrollment"= $Enrollment}|ConvertTo-Json
+    $NewEnrollment = Send-CanvasUpdate -CanvasApiUrl $EnrollmentUrl -RequestBody $EnrollmentBody -TokenFilePath $TokenFilePath    
     return $NewEnrollment
 }
 
