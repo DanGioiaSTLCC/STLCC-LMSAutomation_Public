@@ -35,26 +35,12 @@ Add-Type -AssemblyName System.Web
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $global:CanvasSite = "school.beta.instructure.com"
 
-#. $PSScriptRoot\Invoke-GraphQLQuery.ps1
-
 <# 
 We can scrap all the token getting/renewing for Canvas that was used in Bb and use a user token
 OAuth tokens are only used for 3-legged OAuth in Canvas
 We will need to setup a policy on expiry for automation tokens
 ------------------------------------------------
 #>
-
-<#function Get-UrlUtf8EncodedString {
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory=$true)]
-        [string]$StringText
-    )
-    $enc = [System.Text.Encoding]::UTF8
-    $UtfText= $enc.GetChars($enc.GetBytes($StringText))
-    $UrlText = [System.Web.HttpUtility]::UrlPathEncode($UtfText)
-    return $UrlText
-}#>
 
 function Get-UrlEncodedString {
     [CmdletBinding()]
@@ -371,6 +357,7 @@ function Get-CanvasTokenString {
     # read the content of the file
     $UserPwSecured = Get-Content $KeeperFile | ConvertTo-SecureString
 
+    <#
     # determin if pwsh or powershell
     $psv = $PSVersionTable.PSVersion.Major
     $min = 7
@@ -382,9 +369,9 @@ function Get-CanvasTokenString {
         $UserPwBinaryString = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($UserPwSecured)
         $UserPwPlainText = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($UserPwBinaryString) 
     }
-    else {
+    else {#>
         $UserPwPlainText = ConvertFrom-SecureString -SecureString $UserPwSecured -AsPlainText
-    }
+    #}
     # send the data back
     return $UserPwPlainText
 }
@@ -568,6 +555,7 @@ function Update-CanvasCourseSisId {
     }
     Send-CanvasUpdate @UpdateArgs
 }
+
 function Get-CanvasCourse {
     [CmdletBinding()]
     param (
@@ -737,14 +725,14 @@ function New-CanvasMembership {
             $CourseRole = "TaEnrollment"
             $Enrollment.Add("type",$CourseRole)
         }
-        { @("teacher","instructor","professor") -contains $_} { 
+        { @("teacher","instructor","professor","teacherenrollment") -contains $_} { 
             $CourseRole = "TeacherEnrollment"
             $Enrollment.Add("type",$CourseRole)
         }
         { @("3","4","5","6","7","13","22","23","25","56") -contains $_} { 
             $Enrollment.Add("role_id",$CourseRole)
         }
-        Default {Write-Host "unrecognized role definition: $($CourseRole)";exit}
+        Default {Write-Host "unrecognized role definition: $($CourseRole)";break;}
     }
     # add notify if set
     if ($Notify){$Enrollment.Add("notify","true")}
@@ -900,12 +888,18 @@ function New-CanvasCourseCopy {
         [Parameter(Mandatory=$true)]
         [String]$CourseDestination,
 
+        [Parameter(Mandatory=$false)]
+        [bool]$SkipSettings=$false,
+
         [Parameter(Mandatory=$true)]
         [string]$TokenFilePath
     )
     $MigrationUrl = "https://{0}/api/v1/courses/{1}/content_migrations" -f $global:CanvasSite,$CourseDestination
     $MigrationSettings = @{
         source_course_id = $CourseSource
+    }
+    if ($SkipSettings){
+        $MigrationSettings.Add("importer_skips","all_course_settings")
     }
     $MigrationObject = @{
         migration_type = "course_copy_importer"
@@ -914,6 +908,46 @@ function New-CanvasCourseCopy {
     $MigrationBody = ConvertTo-Json $MigrationObject
     $MigrationTask = Send-CanvasUpdate -RequestBody $MigrationBody -CanvasApiUrl $MigrationUrl -TokenFilePath $TokenFilePath
     return $MigrationTask
+}
+
+function New-CanvasCourseExport {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [String]$CourseId,
+
+        [Parameter(Mandatory=$false)]
+        [string]$ExportType="Course",
+
+        [Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    $ExportSettings = @{
+        skip_notifications = $true
+    }
+    switch ($ExportType.ToLower()) {
+        "course" { $ExportSettings.Add("export_type","common_cartridge") }
+        "files" { $ExportSettings.Add("export_type","zip") }
+        { @("quiz","quizzes","test","tests") -contains $_} { $ExportSettings.Add("export_type","qti") }
+        Default {$ExportSettings.Add("export_type","common_cartridge")}
+    }
+    $ExportStartUrl = "https://{0}/api/v1/courses/{1}/content_exports" -f $CanvasSite,$CourseId
+    $ExportSettings = $ExportSettings | ConvertTo-Json
+    Send-CanvasUpdate -CanvasApiUrl $ExportStartUrl -RequestBody $ExportSettings -ApiVerb "POST" -TokenFilePath $TokenFilePath
+}
+
+function Get-CanvasCourseExports {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$CourseId
+
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    $ExportListUrl = "https://{0}/api/v1/courses/{1}/content_exports" -f $global:CanvasSite,$CourseId
+    $result = Get-CanvasItemList -CanvasApiUrl $ExportListUrl -TokenFilePath $TokenFilePath
+    return $result
 }
 
 function Set-CanvasCoursePublished {
@@ -1015,7 +1049,6 @@ function Set-CanvasCourseSelfenroll {
     $updateBody = @{"course"=$updatePart} | ConvertTo-Json
     Send-CanvasUpdate -CanvasApiUrl $CourseUpdateUrl -ApiVerb "PUT" -RequestBody $updateBody -TokenFilePath $TokenFilePath
 }
-
 
 function Get-CanvasGraphQLResults {
     <#
@@ -1279,6 +1312,7 @@ function Get-CanvasCourseModules {
     $ModuleListParams = @{
         "CanvasApiUrl" = $CourseModulesUrl
         "TokenFilePath" = $TokenFilePath
+        PerPage = 100
     }
     # call the requestor
     Get-CanvasItemList @ModuleListParams   
@@ -1517,6 +1551,33 @@ function Get-CanvasTerms {
 }
 Set-Alias -Name Get-CanvasCourseTerms -Value Get-CanvasTerms
 Set-Alias -Name Get-CanvasEnrollmentTerms -Value Get-CanvasTerms
+
+function Get-CanvasTerm {
+    <#
+    .Synopsis
+    retrieve single term from Canvas
+    .PARAMETER TermCode
+    full YYYYTC term code, example: 202030
+    .Parameter TokenFilePath
+    path to the secure string file containing the encrypted Canvas user token
+    .Parameter Account
+    optional account specifier, defaults to self   
+    #>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$TermCode
+    
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+        
+        ,[Parameter(Mandatory=$false)]
+        [string]$Account="self"
+    )
+    $TermsUrl = "https://{0}/api/v1/accounts/{1}/terms/sis_term_id:{2}" -f $global:CanvasSite,$Account,$TermCode
+    $TermResponse = Get-CanvasItem -CanvasApiUrl $TermsUrl -TokenFilePath $TokenFilePath
+    return $TermResponse
+}
 
 function New-CanvasNotification {
     <#
@@ -1956,6 +2017,7 @@ function Invoke-CanvasReportMonitor {
     }
     return @{status=$FinalStatus;message=$FinalMsg}
 }
+
 function Start-CanvasSisJobMonitor {
     <#
     .SYNOPSIS 
@@ -2030,8 +2092,6 @@ function Set-CanvasCourseTabVisibility {
     Send-CanvasUpdate -CanvasApiUrl $UpdateUrl -RequestBody $UpdateBody -ApiVerb "PUT" -TokenFilePath $TokenFilePath
 
 }
-
-
 
 function Set-AllyConfigVisibilityAdmin {
     [CmdletBinding()]
@@ -2321,7 +2381,7 @@ function Get-CanvasCourseAssignmentGroups {
         [string]$TokenFilePath
     )
     # route "https://stlcc.beta.instructure.com/api/v1/courses/sis_course_id:32952.202230/assignment_groups "
-    $ApiUrl = "https://{0}/api/v1/courses/{1}/assignment_groups?include=assignments" -f $global:CanvasSite,$CourseId
+    $ApiUrl = "https://{0}/api/v1/courses/{1}/assignment_groups?include=assignments&per_page=100" -f $global:CanvasSite,$CourseId
     $AsgnGroupListParams = @{
         "CanvasApiUrl" = $ApiUrl
         "TokenFilePath" = $TokenFilePath
@@ -2355,6 +2415,144 @@ function Remove-CanvasCourseAssignmentGroup {
     # send the update
     $result = Send-CanvasUpdate @NewDataParams
     Write-Host "deleted assignment group '$($result.name)'"
+}
+
+function Set-CanvasCourseQuota {
+    [CmdletBinding()]
+    param (
+        # canvas course identifier
+        [Parameter(Mandatory=$true)]
+        [string]$CourseId
+        # new quota in megabytes
+        ,[Parameter(Mandatory=$true)]
+        [uint]$Quota
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # format the api url
+    $ApiUrl = "https://{0}/api/v1/courses/{1}" -f $global:CanvasSite,$CourseId
+    # structure the new data
+    $NewData = @{
+        course = @{
+            storage_quota_mb = $Quota.ToString()
+        }
+    }
+    
+    # format the data for upload
+    $NewDataBody = $NewData|ConvertTo-Json
+    
+    # configure upload parameters
+    $NewDataParams = @{
+        CanvasApiUrl = $ApiUrl
+        RequestBody = $NewDataBody
+        ApiVerb = "PUT"
+        TokenFilePath = $TokenFilePath
+    }
+    # send the update
+    $NewItemResult = Send-CanvasUpdate @NewDataParams
+    return $NewItemResult
+}
+
+function Get-CanvasMigrationStatus {
+    [CmdletBinding()]
+    param (
+        # Canvas course identifier
+        [Parameter(Mandatory=$true)]
+        [string]$CourseId
+        # migration id
+        ,[Parameter(Mandatory=$true)]
+        [string]$MigrationId
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # format the api url
+    $ApiUrl = "https://{0}/api/v1/courses/{1}/content_migrations/{2}" -f $global:CanvasSite,$CourseId,$MigrationId
+
+    # configure call parameters
+    $MigParams = @{
+        CanvasApiUrl = $ApiUrl
+        TokenFilePath = $TokenFilePath
+    }
+    
+    # send the request
+    $ItemResult = Get-CanvasItem @MigParams
+    return $ItemResult
+}
+
+function Get-CanvasProgress {
+    [CmdletBinding()]
+    param (
+        # Progress ID from end of URL
+        [Parameter(Mandatory=$true)]
+        [string]$ProgressId
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # format the api url
+    $ApiUrl = "https://{0}/api/v1/progress/{1}" -f $global:CanvasSite,$ProgressId
+
+    # configure call parameters
+    $MigParams = @{
+        CanvasApiUrl = $ApiUrl
+        TokenFilePath = $TokenFilePath
+    }
+    
+    # send the request
+    $ItemResult = Get-CanvasItem @MigParams
+    return $ItemResult
+}
+
+function Reset-CanvasLinkVerifier {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$FileId
+
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # format the api url
+    $ApiUrl = "https://{0}/api/v1/files/{1}/reset_verifier" -f $global:CanvasSite,$FileId
+    
+    $NewDataBody = ""
+
+    # configure upload parameters
+    $NewDataParams = @{
+        CanvasApiUrl = $ApiUrl
+        RequestBody = $NewDataBody
+        ApiVerb = "Delete"
+        TokenFilePath = $TokenFilePath
+    }
+    # send the update
+    $NewItemResult = Send-CanvasUpdate @NewDataParams
+    return $NewItemResult
+}
+
+function Get-CanvasRoles {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+
+        ,[Parameter(Mandatory=$false)]
+        [string]$AccountId="1"
+    )
+    $RoleUrl = "https://{0}/api/v1/accounts/{1}/roles" -f $global:CanvasSite,$AccountId
+    $RoleList = Get-CanvasItemList -CanvasApiUrl $RoleUrl -TokenFilePath $TokenFilePath -PerPage 50
+    return $RoleList
+}
+
+function Get-CanvasCourseRoles {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    $RoleList = Get-CanvasRoles -TokenFilePath $TokenFilePath
+    $RoleList|Where-Object{$_.base_role_type -like "*Enrollment"}|Format-Table -Property "Id","label","last_updated_at","base_role_type","workflow_state created_at"
 }
 
 <#
