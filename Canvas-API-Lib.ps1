@@ -189,6 +189,28 @@ function Get-CanvasItem {
     return $result
 }
 
+function Get-CanvasItemWithVars {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$CanvasApiUrl,
+
+        [Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    $TokenString = Get-CanvasTokenString $TokenFilePath
+    $result = Invoke-RestMethod -Method GET -Headers @{"Authorization"="Bearer $TokenString"} -Uri $CanvasApiUrl -ResponseHeadersVariable ResponseHeaders -StatusCodeVariable StatusCodeInfo -SkipHttpErrorCheck
+    # clear token data
+    $TokenString = $null
+    Remove-Variable -Name "TokenString"    
+    $ReturnData = @{
+        result = $result
+        StatusCode = $StatusCodeInfo
+        Headers = $ResponseHeaders
+    }
+    return $ReturnData
+}
+
 function Get-CanvasItemList {
     [CmdletBinding()]
     param (
@@ -298,7 +320,7 @@ function Send-CanvasSisFile {
         $UploadRoute += "&diffing_drop_status=" + $DropMode
     }
     if ($OtherArguments -ne ""){$UploadRoute += "&" + $OtherArguments}
-    if ($OverrideStickiness){$UploadRoute += "&override_sis_stickiness=true&add_sis_stickiness"}
+    if ($OverrideStickiness){$UploadRoute += "&override_sis_stickiness=true&add_sis_stickiness=true"}
     Write-Verbose $UploadRoute
     # send the results to canvas
     $UploadResult = Invoke-restmethod -Method POST -Headers @{"Authorization"="Bearer $TokenString"} -Uri $UploadRoute -InFile $UploadFilePath -ContentType "text/csv"
@@ -347,31 +369,13 @@ function Get-CanvasTokenString {
 	[CmdletBinding()]
     param (
         [Parameter()]
-        [string]$KeeperFile,
-
-        [Parameter(Mandatory=$false)]
-        [bool]$Classic=$false
+        [string]$KeeperFile
     )
     # setup return var
     [string]$UserPwPlainText = ""
     # read the content of the file
     $UserPwSecured = Get-Content $KeeperFile | ConvertTo-SecureString
-
-    <#
-    # determin if pwsh or powershell
-    $psv = $PSVersionTable.PSVersion.Major
-    $min = 7
-    if ($psv -lt $min){
-        $Classic = $true        
-    }
-    # run the parsing based on powershell env
-    if ($Classic){
-        $UserPwBinaryString = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($UserPwSecured)
-        $UserPwPlainText = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($UserPwBinaryString) 
-    }
-    else {#>
-        $UserPwPlainText = ConvertFrom-SecureString -SecureString $UserPwSecured -AsPlainText
-    #}
+    $UserPwPlainText = ConvertFrom-SecureString -SecureString $UserPwSecured -AsPlainText
     # send the data back
     return $UserPwPlainText
 }
@@ -388,6 +392,27 @@ function Get-CanvasUserInfo {
     $UserUrl = "https://{0}/api/v1/users/{1}" -f $global:CanvasSite,$CanvasUserId
     $UserData = Get-CanvasItem -TokenFilePath $TokenFilePath -CanvasApiUrl $UserUrl
     return $UserData
+}
+
+function Test-CanvasUsername {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$CanvasUsername,
+        
+        [Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    $UserUrl = "https://{0}/api/v1/users/sis_login_id:{1}" -f $global:CanvasSite,$CanvasUsername
+        
+    $ResultData = Get-CanvasItemWithVars -CanvasApiUrl $UserUrl -TokenFilePath $TokenFilePath
+
+    if ($ResultData.StatusCode -ne 200){
+        $Msg = "Error:" + $ResultData.StatusCode + ":" + $ResultData.result.errors.message
+        return $Msg
+    }
+    else {
+        return $ResultData.result 
+    }
 }
 
 function Get-CanvasUserByLogin {
@@ -2214,7 +2239,7 @@ function Get-CollegeEmailAddressFromAD {
     try {
         $ADSearchResult = Get-ADUser -Identity $CollegeUsername -Properties EmailAddress
         if (($null -ne $ADSearchResult) -and ($null -ne $ADSearchResult.EmailAddress) -and ($ADSearchResult.EmailAddress -ne "")){
-            $EmamilSearchResult = $ADSearchResult.EmailAddress
+            $EmamilSearchResult = $ADSearchResult.EmailAddress.ToLower()
         }
     } catch { 
         #log error conditions 
@@ -2552,7 +2577,7 @@ function Get-CanvasCourseRoles {
         [string]$TokenFilePath
     )
     $RoleList = Get-CanvasRoles -TokenFilePath $TokenFilePath
-    $RoleList|Where-Object{$_.base_role_type -like "*Enrollment"}|Format-Table -Property "Id","label","last_updated_at","base_role_type","workflow_state created_at"
+    $RoleList|Where-Object{$_.base_role_type -like "*Enrollment"}|Format-Table -Property "Id","label","last_updated_at","base_role_type","workflow_state","created_at"
 }
 
 <#
