@@ -333,6 +333,49 @@ function Send-CanvasSisFile {
     return $UploadResult
 }
 
+function Send-CanvasOutcomeFile {
+    <#
+    .Synopsis
+    upload outcomes csv files to Canvas.
+    
+    .Description
+    upload outcomes csv files to Canvas.
+
+    for a full reference of formatting the CSV files see https://canvas.instructure.com/doc/api/file.outcomes_csv.html
+    
+    .Parameter UploadFilePath
+    full file path of the file to be uploaded
+    
+    .Parameter TokenFilePath
+    path of the file containing the token text stored as a secure string
+    
+    #>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$UploadFilePath,
+        
+        [Parameter(Mandatory = $true)]
+        [string]$TokenFilePath
+        
+    )
+    $TokenString = Get-CanvasTokenString $TokenFilePath
+    # format the upload url
+    [string]$UploadRoute = "https://{0}/api/v1/accounts/1/outcome_imports" -f  $global:CanvasSite;
+    $UploadRoute += "?import_type=instructure_csv"
+    
+    Write-Verbose $UploadRoute
+    # send the file to canvas
+    $UploadResult = Invoke-restmethod -Method POST -Headers @{"Authorization"="Bearer $TokenString"} -Uri $UploadRoute -InFile $UploadFilePath -ContentType "text/csv"
+    
+    # clear out the token var
+    $TokenString = $null;
+    Remove-Variable -Name "TokenString"
+    
+    # return the upload result to the invoking expression
+    return $UploadResult
+}
+
 function Get-CanvasSisStatus {
     [CmdletBinding()]
     param (
@@ -1075,6 +1118,24 @@ function Set-CanvasCourseSelfenroll {
     Send-CanvasUpdate -CanvasApiUrl $CourseUpdateUrl -ApiVerb "PUT" -RequestBody $updateBody -TokenFilePath $TokenFilePath
 }
 
+function Set-CanvasCourseBlueprintStatus {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$CourseId,
+
+        [Parameter(Mandatory=$true)]
+        [bool]$BlueprintStatus,
+
+        [Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    [string]$CourseUpdateUrl = "https://{0}/api/v1/courses/{1}" -f $global:CanvasSite,$CourseId
+    $updatePart = @{"blueprint" = $BlueprintStatus}
+    $updateBody = @{"course" = $updatePart} | ConvertTo-Json
+    Send-CanvasUpdate -CanvasApiUrl $CourseUpdateUrl -ApiVerb "PUT" -RequestBody $updateBody -TokenFilePath $TokenFilePath
+}
+
 function Get-CanvasGraphQLResults {
     <#
     .Synopsis
@@ -1783,57 +1844,6 @@ function Start-CanvasUserReportForTerm {
         [string]$TokenFilePath
     )
     
-    <#
-    title      : Provisioning
-    parameters : @{enrollment_term_id=; users=; accounts=; terms=; courses=; sections=; enrollments=; groups=;
-                group_categories=; group_membership=; xlist=; user_observers=; admins=; created_by_sis=;
-                include_deleted=; enrollment_filter=; enrollment_states=}
-    report     : provisioning_csv    
-    
-    title      : SIS Export
-    parameters : @{enrollment_term_id=; users=; accounts=; terms=; courses=; sections=; enrollments=; groups=;
-                group_categories=; group_membership=; xlist=; user_observers=; admins=; created_by_sis=; include_deleted=}
-    report     : sis_export_csv    
-    
-    # POST /api/v1/accounts/:account_id/reports/:report
-    
-    title      : Last User Access
-    parameters : @{enrollment_term_id=; course_id=; include_deleted=}
-    report     : last_user_access_csv
-    last_run   : @{id=46; progress=100; parameters=; current_line=2677; status=complete; report=last_user_access_csv;
-        created_at=4/1/2022 11:38:02 AM; started_at=4/1/2022 11:38:03 AM; ended_at=4/1/2022 11:38:11 AM;
-        file_url=; attachment=}
-
-    title      : Zero Activity
-    parameters : @{enrollment_term_id=; start_at=; course_id=}
-    report     : zero_activity_csv
-    last_run   : @{id=45; progress=100; parameters=; current_line=5617; status=complete; report=zero_activity_csv;
-        created_at=4/1/2022 9:18:14 AM; started_at=4/1/2022 9:18:25 AM; ended_at=4/1/2022 9:18:26 AM;
-        file_url=; attachment=}
-    
-    title      : Last User Access
-    parameters : @{enrollment_term_id=; course_id=; include_deleted=}
-    report     : last_user_access_csv
-    last_run   : @{id=46; progress=100; parameters=; current_line=2677; status=complete; report=last_user_access_csv;
-        created_at=4/1/2022 11:38:02 AM; started_at=4/1/2022 11:38:03 AM; ended_at=4/1/2022 11:38:11 AM;
-        file_url=; attachment=}
-
-    title      : User Access Tokens
-    parameters : @{include_deleted=}
-    report     : user_access_tokens_csv
-    last_run   : @{id=23; progress=100; parameters=; current_line=279; status=complete; report=user_access_tokens_csv;
-        created_at=1/5/2022 3:50:54 PM; started_at=1/5/2022 3:50:54 PM; ended_at=1/5/2022 3:50:55 PM;
-        file_url=; attachment=}
-
-    title      : User Course Access Log
-    parameters : @{start_at=; term=; enrollment_type=}
-    report     : user_course_access_log_csv
-    last_run   : @{id=10; progress=100; parameters=; current_line=1166; status=complete;
-        report=user_course_access_log_csv; created_at=11/3/2021 2:20:35 PM; started_at=11/3/2021 2:20:43 PM;
-        ended_at=11/3/2021 2:20:46 PM; file_url=;
-        attachment=}
-    #>
-    
     $ReportUrl = "https://{0}/api/v1/accounts/{1}/reports/{2}" -f $global:CanvasSite,$Account,$ReportName
     $Paramaters = @{parameters = @{enrollment_term_id = $TermId;users = "$IncludeUsers";courses = $IncludeCourses   ;sections = "true";enrollments = "true"}} | ConvertTo-Json
     Send-CanvasUpdate -CanvasApiUrl $ReportUrl -RequestBody $Paramaters -ApiVerb "POST" -TokenFilePath $TokenFilePath
@@ -1848,16 +1858,7 @@ function Get-CurrentTermCode {
     $m = $nowstamp.Month
     $y = $nowstamp.Year
     switch ($m){
-        1{
-            $tc = "10"
-        }
-        2{
-            $tc = "10"
-        }
-        3{
-            $tc = "10"
-        }
-        4{
+        {@(1,2,3,4) -contains $_}{
             $tc = "10"
         }
         5{
@@ -1868,22 +1869,10 @@ function Get-CurrentTermCode {
                 $tc = "10"
             }
         }
-        6{
+        {@(6,7) -contains $_}{
             $tc = "20"
         }
-        7{
-            $tc = "20"
-        }
-        8{
-            $tc = "30"
-        }
-        9{
-            $tc = "30"
-        }
-        10{
-            $tc = "30"
-        }
-        11{
+        {@(8,9,10,11) -contains $_}{
             $tc = "30"
         }
         12{
@@ -1979,6 +1968,9 @@ function Invoke-CanvasReportMonitor {
 
         ,[Parameter(Mandatory=$false)]
         [int32]$SleepSeconds = 30
+
+        ,[Parameter(Mandatory=$false)]
+        [string]$Account = "self"
     )
     $FinalMsg = ""
     $FinalStatus = ""
@@ -1986,7 +1978,7 @@ function Invoke-CanvasReportMonitor {
         $PreviousIterations++
         if ($PreviousIterations -le $MaxIterations){
             Write-Verbose ("Monitor check of report job {0} number {1}" -f $ReportJobId,$PreviousIterations.ToString())
-            $CurrentStatus = Get-CanvasReportStatus -ReportName $ReportName -ReportId $ReportJobId -TokenFilePath $TokenFilePath
+            $CurrentStatus = Get-CanvasReportStatus -ReportName $ReportName -ReportId $ReportJobId -TokenFilePath $TokenFilePath -Account $Account
             switch ($CurrentStatus.status) {                
                 { @("complete") -contains $_} {  
                     Write-Verbose ("Report status is {0}" -f $CurrentStatus.status)
@@ -2008,6 +2000,7 @@ function Invoke-CanvasReportMonitor {
                         MaxIterations = $MaxIterations
                         PreviousIterations = $PreviousIterations
                         SleepSeconds = $SleepSeconds
+                        Account = $Account
                     }
                     Invoke-CanvasReportMonitor @ReMonitor
                 }
@@ -2021,6 +2014,7 @@ function Invoke-CanvasReportMonitor {
                         MaxIterations = $MaxIterations
                         PreviousIterations = $PreviousIterations
                         SleepSeconds = $SleepSeconds
+                        Account = $Account
                     }
                     Invoke-CanvasReportMonitor @ReMonitor
                     <#
@@ -2405,7 +2399,7 @@ function Get-CanvasCourseAssignmentGroups {
         ,[Parameter(Mandatory=$true)]
         [string]$TokenFilePath
     )
-    # route "https://stlcc.beta.instructure.com/api/v1/courses/sis_course_id:32952.202230/assignment_groups "
+    
     $ApiUrl = "https://{0}/api/v1/courses/{1}/assignment_groups?include=assignments&per_page=100" -f $global:CanvasSite,$CourseId
     $AsgnGroupListParams = @{
         "CanvasApiUrl" = $ApiUrl
@@ -2579,6 +2573,50 @@ function Get-CanvasCourseRoles {
     $RoleList = Get-CanvasRoles -TokenFilePath $TokenFilePath
     $RoleList|Where-Object{$_.base_role_type -like "*Enrollment"}|Format-Table -Property "Id","label","last_updated_at","base_role_type","workflow_state","created_at"
 }
+function Get-CanvasOutcomeImportStatus {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$ImportId
+        
+        ,[Parameter(Mandatory=$false)]
+        [string]$account="self"
+        
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # "https://$CanvasSite/api/v1/accounts/self/outcome_imports/40"
+    $OcImportUrl = "https://{0}/api/v1/accounts/{1}/outcome_imports/{2}" -f $CanvasSite, $account, $ImportId
+    $Status = Get-CanvasItemWithVars -CanvasApiUrl $OcImportUrl -TokenFilePath $TokenFilePath
+    if ($Status.statuscode -eq 200) {
+        return $Status.result
+    }
+    else {
+        return "Error retrieving report: $($Status.StatusCode), $($Status.result.message)"
+    }
+}
+
+function Get-CanvasContentMigrationsForCourse {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$CourseId
+                
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # /api/v1/courses/:course_id/content_migrations
+    $MigListUrl = "https://{0}/api/v1/courses/{1}/content_migrations" -f $CanvasSite, $CourseId
+    $MigListParams = @{
+        CanvasApiUrl = $MigListUrl 
+        TokenFilePath = $TokenFilePath 
+        PerPage = 50
+    }
+    $MigList = Get-CanvasItemList @MigListParams
+    return $MigList
+}
 
 <#
 function new-genericfunction {
@@ -2620,4 +2658,98 @@ function new-genericfunction {
     $NewItemResult = Send-CanvasUpdate @NewDataParams
     return $NewItemResult
 }
+#>
+
+<#
+Available Reports:
+title      : User Course Access Log
+parameters : @{start_at=; term=; enrollment_type=}
+report     : user_course_access_log_csv
+
+title      : Eportfolio Report
+parameters : @{no_enrollments=; include_deleted=}
+report     : eportfolio_report_csv
+
+title      : Grade Export
+parameters : @{enrollment_term_id=; include_deleted=}
+report     : grade_export_csv
+
+title      : Multiple Grading Periods Grade Export
+parameters : @{enrollment_term_id=}
+report     : mgp_grade_export_csv
+
+title      : Last User Access
+parameters : @{enrollment_term_id=; course_id=; include_deleted=}
+report     : last_user_access_csv
+
+title      : Last Enrollment Activity
+parameters : @{enrollment_term_id=; course_id=}
+report     : last_enrollment_activity_csv
+
+title      : Outcome Export
+parameters :
+report     : outcome_export_csv
+
+title      : Outcome Results
+parameters : @{enrollment_term_id=; order=; include_deleted=}
+report     : outcome_results_csv
+
+title      : Provisioning
+parameters : @{enrollment_term_id=; users=; accounts=; terms=; courses=; sections=; enrollments=; groups=;
+             group_categories=; group_membership=; xlist=; user_observers=; admins=; created_by_sis=;
+             include_deleted=; enrollment_filter=; enrollment_states=}
+report     : provisioning_csv
+
+title      : Recently Deleted Courses
+parameters : @{enrollment_term_id=}
+report     : recently_deleted_courses_csv
+
+title      : SIS Export
+parameters : @{enrollment_term_id=; users=; accounts=; terms=; courses=; sections=; enrollments=; groups=;
+             group_categories=; group_membership=; xlist=; user_observers=; admins=; created_by_sis=; include_deleted=}
+report     : sis_export_csv
+
+title      : Student Competency
+parameters : @{enrollment_term_id=; include_deleted=}
+report     : student_assignment_outcome_map_csv
+
+title      : Students with no submissions
+parameters : @{enrollment_term_id=; course_id=; start_at=; end_at=; include_enrollment_state=; enrollment_state=}
+report     : students_with_no_submissions_csv
+
+title      : Unpublished Courses
+parameters : @{enrollment_term_id=}
+report     : unpublished_courses_csv
+
+title      : Public Courses
+parameters : @{enrollment_term_id=}
+report     : public_courses_csv
+
+title      : Course Storage
+parameters : @{enrollment_term_id=}
+report     : course_storage_csv
+
+title      : Unused Courses
+parameters : @{enrollment_term_id=}
+report     : unused_courses_csv
+
+title      : Zero Activity
+parameters : @{enrollment_term_id=; start_at=; course_id=}
+report     : zero_activity_csv
+
+title      : User Access Tokens
+parameters : @{include_deleted=}
+report     : user_access_tokens_csv
+
+title      : LTI Report
+parameters : @{include_deleted=}
+report     : lti_report_csv
+last_run   : @{id=3385; progress=100; parameters=; current_line=150; status=complete; report=lti_report_csv;
+             created_at=3/6/2023 2:57:17 PM; started_at=3/6/2023 2:57:17 PM; ended_at=3/6/2023 2:57:18 PM;
+             
+
+title      : Developer Keys Report
+parameters :
+report     : developer_key_report_csv
+
 #>
