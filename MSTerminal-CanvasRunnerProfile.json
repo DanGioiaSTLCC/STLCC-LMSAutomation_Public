@@ -1,12 +1,27 @@
+                "colorScheme": "Vintage",
+                "commandline": "pwsh.exe -NoExit -noprofile -nologo -file \"%USERPROFILE%\\Dev\\MyPSTools\\CanvasRunner-prod.ps1\"",
+                "font": 
+                {
+                    "face": "CaskaydiaCove NF"
+                },
+                "guid": "{46a60736-05c8-558c-b292-5598c1cad212}",
+                "icon": "ms-appx:///ProfileIcons/pwsh.png",
+                "name": "Canvas Runner",
+                "startingDirectory": "%USERPROFILE%\\Dev",
+                "tabColor": "#0C3D1F",
+                "tabTitle": "Canvas Runner PROD"
+            },
             {
-                "colorScheme": "Tango Dark",
-                "commandline": "pwsh.exe -NoExit -noprofile -nologo -file \"%USERPROFILE%\\Dev\\MyPSTools\\CanvasRunner.ps1\"",
+                "colorScheme": "Vintage",
+                "commandline": "pwsh.exe -NoExit -noprofile -nologo -file \"%USERPROFILE%\\Dev\\MyPSTools\\CanvasRunner-beta.ps1\"",
                 "font": 
                 {
                     "face": "Cascadia Code"
                 },
+                "guid": "{3ca7ecf4-3216-4d35-ad12-435579e30647}",
                 "icon": "ms-appx:///ProfileIcons/pwsh.png",
-                "name": "Canvas Runner",
+                "name": "Canvas BETA",
                 "startingDirectory": "%USERPROFILE%\\Dev",
-                "tabTitle": "Canvas Runner"
+                "tabColor": "#881978",
+                "tabTitle": "Canvas Runner BETA"
             },
