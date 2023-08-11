@@ -112,6 +112,7 @@ function Get-NewPasswordText {
 	}
 	return $PasswordText
 }
+Set-Alias -Name New-PasswordText -Value Get-NewPasswordText
 
 function Get-IsoDate {
     [CmdletBinding()]
@@ -258,6 +259,61 @@ function Get-CanvasItemList {
     $TokenString = $null
     Remove-Variable -Name "TokenString"    
     return $result
+}
+
+function Get-CanvasItemListWithVars {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$CanvasApiUrl,
+
+        [Parameter(Mandatory=$true)]
+        [string]$TokenFilePath,
+
+        [Parameter(Mandatory=$false)]
+        [int32]$PerPage=10,
+
+        [Parameter(Mandatory=$false)]
+        [int32]$MaxResults=1000
+    )
+    # set maximum "next" link follows
+    $MaxPages = 100
+    # determine page size for results
+    if (($PerPage -ne 10) -or ($MaxResults -ne 1000)){
+        # check if remainder exists max/per, set pages accordingly
+        if (0 -eq $MaxResults % $PerPage){
+            $MaxPages = $MaxResults / $PerPage
+        }
+        else {
+            $MaxPages = [int]($MaxResults / $PerPage) + 1
+        }
+    }
+    # if paging specified add it the url
+    if ($PerPage -ne 10){
+        if (($CanvasApiUrl -contains "per_page") -eq $false){
+            # check if there are already query parameters
+            if (($CanvasApiUrl -contains "`?") -eq $false){
+                $CanvasApiUrl += "?per_page={0}" -f $PerPage.ToString()
+            }
+            else {
+                $CanvasApiUrl += "&per_page={0}" -f $PerPage.ToString()
+            }
+        }
+    }
+    Write-Verbose "original URL is $CanvasApiUrl"
+
+    $TokenString = Get-CanvasTokenString $TokenFilePath
+    # add follow rel link for the command to automatically follw the next result set link
+    $result = Invoke-RestMethod -Method GET -Headers @{"Authorization"="Bearer $TokenString"} -Uri $CanvasApiUrl -FollowRelLink -MaximumFollowRelLink $MaxPages -ResponseHeadersVariable ResponseHeaders -StatusCodeVariable StatusCodeInfo -SkipHttpErrorCheck
+    # clear token data
+    $TokenString = $null
+    Remove-Variable -Name "TokenString"
+    $ReturnData = @{
+        result = $result
+        StatusCode = $StatusCodeInfo
+        Headers = $ResponseHeaders
+    }
+    return $ReturnData
 }
 
 function Send-CanvasSisFile {
@@ -2399,7 +2455,6 @@ function Get-CanvasCourseAssignmentGroups {
         ,[Parameter(Mandatory=$true)]
         [string]$TokenFilePath
     )
-    
     $ApiUrl = "https://{0}/api/v1/courses/{1}/assignment_groups?include=assignments&per_page=100" -f $global:CanvasSite,$CourseId
     $AsgnGroupListParams = @{
         "CanvasApiUrl" = $ApiUrl
@@ -2570,9 +2625,10 @@ function Get-CanvasCourseRoles {
         [Parameter(Mandatory=$true)]
         [string]$TokenFilePath
     )
-    $RoleList = Get-CanvasRoles -TokenFilePath $TokenFilePath
-    $RoleList|Where-Object{$_.base_role_type -like "*Enrollment"}|Format-Table -Property "Id","label","last_updated_at","base_role_type","workflow_state","created_at"
+    $RoleList = Get-CanvasRoles -TokenFilePath $TokenFilePath | Where-Object{$_.base_role_type -like "*Enrollment"}
+    return $RoleList
 }
+
 function Get-CanvasOutcomeImportStatus {
     [CmdletBinding()]
     param (
@@ -2586,7 +2642,7 @@ function Get-CanvasOutcomeImportStatus {
         ,[Parameter(Mandatory=$true)]
         [string]$TokenFilePath
     )
-    # "https://$CanvasSite/api/v1/accounts/self/outcome_imports/40"
+    # " /api/v1/accounts/self/outcome_imports/:id"
     $OcImportUrl = "https://{0}/api/v1/accounts/{1}/outcome_imports/{2}" -f $CanvasSite, $account, $ImportId
     $Status = Get-CanvasItemWithVars -CanvasApiUrl $OcImportUrl -TokenFilePath $TokenFilePath
     if ($Status.statuscode -eq 200) {
@@ -2616,6 +2672,31 @@ function Get-CanvasContentMigrationsForCourse {
     }
     $MigList = Get-CanvasItemList @MigListParams
     return $MigList
+}
+
+function Get-CanvasCourseAnnouncements {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$CourseId
+        
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # format the api url
+    $ApiUrl = "https://{0}/api/v1/announcements?context_code[course]={1}&latest_only=true" -f $global:CanvasSite, $CourseId
+    $ApiUrl2 = "https://{0}/api/v1/courses/{1}/discussion_topics?only_announcements=true" -f $global:CanvasSite, $CourseId
+    
+    # configure upload parameters
+    $DataParams = @{
+        CanvasApiUrl = $ApiUrl2
+        PerPage = 99
+        TokenFilePath = $TokenFilePath
+    }
+    # send the update
+    $ListResult = Get-CanvasItemListWithVars @DataParams
+    return $ListResult
 }
 
 <#
@@ -2744,12 +2825,8 @@ report     : user_access_tokens_csv
 title      : LTI Report
 parameters : @{include_deleted=}
 report     : lti_report_csv
-last_run   : @{id=3385; progress=100; parameters=; current_line=150; status=complete; report=lti_report_csv;
-             created_at=3/6/2023 2:57:17 PM; started_at=3/6/2023 2:57:17 PM; ended_at=3/6/2023 2:57:18 PM;
-             
 
 title      : Developer Keys Report
 parameters :
 report     : developer_key_report_csv
-
 #>
