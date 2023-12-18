@@ -5,8 +5,9 @@ script library
 # checkout https://github.com/PowerShell/DscResources/blob/master/StyleGuidelines.md for more standards
 
 Set-Alias Right Get-RightString
-Set-Alias GetTimestamp Get-LogTimestamp
+Set-Alias LogIt Add-LogEntry
 Set-Alias GetArchivePath Get-ArchivePath
+Set-Alias FindCollectionIndex Get-CollectionIndex
 Set-Alias LogCheck Test-LogStatus
 Set-Alias ArchiveCheck Test-ArchiveStatus
 
@@ -249,19 +250,24 @@ function Send-AutomationCompletedMail {
 	param(
 		$MsgSubject
 		,$MsgBody
-		,$MsgRecipient = "someadmin@institution.edu"
-		,$MsgSender = "noreply-automation@institution.edu"
+		,$MsgRecipient = "bbadmin@stlcc.edu"
+		,$MsgSender = "noreply-LMSAutomation@stlcc.edu"
 	)
 	# splat message arguments
 	$argsMsg = @{}
-	$argsMsg.Add("to",$MsgRecipient)
-	$argsMsg.Add("from",$MsgSender)
-	$argsMsg.Add("subject","$MsgSubject")
-	$argsMsg.Add("body","$MsgBody")
+	$argsMsg.Add("To",$MsgRecipient)
+	$argsMsg.Add("From",$MsgSender)
+	$argsMsg.Add("Subject","$MsgSubject")
+	$argsMsg.Add("Body","$MsgBody")
 	$argsMsg.Add("Attachments",$global:strPathLogFile)
-	$argsMsg.Add("smtpserver","internalrelay.institution.edu")	
+	$argsMsg.Add("SmtpServer","smtp.stlcc.edu")	
 	# use args to send message
-	send-mailmessage @argsMsg 
+	if (Get-Module -ListAvailable -Name PoshMailKit){
+		Send-MKMailMessage @argsMsg
+	}
+	else {
+		Send-MailMessage @argsMsg
+	}
 }
 
 function Get-RandomText {

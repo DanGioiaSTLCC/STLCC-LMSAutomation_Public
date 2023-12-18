@@ -34,13 +34,7 @@ Add-Type -AssemblyName System.Web
 # not sure if PowerShell or Windows issue but not setting TLS 1.2 can cause issues randomly so I always set it
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $global:CanvasSite = "school.beta.instructure.com"
-
-<# 
-We can scrap all the token getting/renewing for Canvas that was used in Bb and use a user token
-OAuth tokens are only used for 3-legged OAuth in Canvas
-We will need to setup a policy on expiry for automation tokens
-------------------------------------------------
-#>
+$global:LorSite = "lor.instructure.com"
 
 function Get-UrlEncodedString {
     [CmdletBinding()]
@@ -853,7 +847,10 @@ function New-CanvasMembership {
             $CourseRole = "TeacherEnrollment"
             $Enrollment.Add("type",$CourseRole)
         }
-        { @("3","4","5","6","7","13","22","23","25","56") -contains $_} { 
+        { @("ea","eduassist","eduassistant","educationalassistant") -contains $_}{
+            $Enrollment.Add("role_id","28")
+        }
+        { @("3","4","5","6","7","13","22","23","25","26","28") -contains $_} { 
             $Enrollment.Add("role_id",$CourseRole)
         }
         Default {Write-Host "unrecognized role definition: $($CourseRole)";break;}
@@ -980,7 +977,7 @@ function Set-CanvasCourseMembershipStatus {
                 $ApiVerb = "PUT"
                 $EnrollmentUpdateURl = "https://{0}/api/v1/courses/{1}}/enrollments/{2}/reactivate" -f $global:CanvasSite,$CanvasCourse,$EnrId
             }
-            default {Write-Verbose "unrecognized status: '$Status'"}
+            default {Write-Host "unrecognized status: '$Status'"}
         }
         if ($continue -eq $true){
             # build it
@@ -994,11 +991,11 @@ function Set-CanvasCourseMembershipStatus {
             Send-CanvasUpdate @UpdateArgs
         }
         else {
-            Write-Verbose "Enrollment update cancelled."
+            Write-Host "Enrollment update cancelled."
         }
     }
     else {
-        Write-Verbose "Could not find the single enrollment to update"
+        Write-Host "Could not find the single enrollment to update"
     }
 }
 Set-Alias -Name Set-CanvasEnrollmentStatus -Value Set-CanvasCourseMembershipStatus
@@ -1032,6 +1029,40 @@ function New-CanvasCourseCopy {
     $MigrationBody = ConvertTo-Json $MigrationObject
     $MigrationTask = Send-CanvasUpdate -RequestBody $MigrationBody -CanvasApiUrl $MigrationUrl -TokenFilePath $TokenFilePath
     return $MigrationTask
+}
+
+function New-CanvasCommonsImport {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [String]$ResourceId,
+
+        [Parameter(Mandatory=$true)]
+        [String]$CourseId,
+
+        [Parameter(Mandatory=$true)]
+        [string]$CourseName,
+
+        [Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # Get Commons JWT
+    $JwtUrl = "https://{0}/api/lti/accounts/self/jwt_token?tool_launch_url=https://{1}/api/lti" -f $CanvasSite, $global:LorSite
+    $MyJwt = Get-CanvasItem -CanvasApiUrl $JwtUrl -TokenFilePath $TokenFilePath
+    $JwtBody = @{"jwt_token" = $MyJwt.jwt_token}|ConvertTo-Json
+    $SessionUrl = "https://{0}/api/sessions" -f $global:LorSite
+    $SessionInfo = Invoke-RestMethod -Method POST -Uri $SessionUrl -ContentType "application/json" -Body $JwtBody
+    $CommonsHeader = @{"X-Session-ID" = $SessionInfo.sessionId}
+    $UploadUrl = "https://{0}/api/resources/{1}/import" -f $global:LorSite, $ResourceId
+    $CourseBody = @{
+        id = $CourseId
+        name = $CourseName
+    }
+    $UploadBody = @{
+        courses = @($CourseBody)
+    }
+    $UploadBody = $UploadBody | ConvertTo-Json
+    Invoke-RestMethod -Method POST -Uri $UploadUrl -Body $UploadBody -Headers $CommonsHeader -ContentType "application/json"
 }
 
 function New-CanvasCourseExport {
@@ -1971,15 +2002,15 @@ function Invoke-CanvasSisMonitor {
     try {
         $PreviousIterations++
         if ($PreviousIterations -le $MaxIterations){
-            Write-Verbose ("Monitor check of job {0} number {1}" -f $SisJobId,$PreviousIterations.ToString())
+            Write-Host ("Monitor check of job {0} number {1}" -f $SisJobId,$PreviousIterations.ToString())
             $CurrentStatus = Get-CanvasSisStatus -SisUploadRefId $SisJobId -TokenFilePath $TokenFilePath
             switch ($CurrentStatus.workflow_state) {                
                 { @("imported","imported_with_messages","aborted","failed","failed_with_messages") -contains $_} {  
-                    Write-Verbose ("Current finished status is {0}" -f $CurrentStatus.workflow_state)
+                    Write-Host ("Current finished status is {0}" -f $CurrentStatus.workflow_state)
                     $FinalMsg = "SIS import task {0} finished with state:{1}" -f $SisJobId,$CurrentStatus.workflow_state
                 }                
                 { @("created","importing") -contains $_} {  
-                    Write-Verbose ("Current status is {0}, progress:{1}" -f $CurrentStatus.workflow_state,$CurrentStatus.progress)
+                    Write-Host ("Current status is {0}, progress:{1}" -f $CurrentStatus.workflow_state,$CurrentStatus.progress)
                     Start-Sleep -Seconds $SleepSeconds
                     Invoke-CanvasSisMonitor -SisJobId $SisJobId -TokenFilePath $TokenFilePath -MaxIterations $MaxIterations -PreviousIterations $PreviousIterations -SleepSeconds $SleepSeconds
                 }
@@ -1994,8 +2025,8 @@ function Invoke-CanvasSisMonitor {
     }
     catch {
         $FinalMsg = "Error monitoring workflow state for job {0}" -f $SisJobId
-        Write-Verbose $_
-        Write-Verbose $_.ScriptStackTrace
+        Write-Host $_
+        Write-Host $_.ScriptStackTrace
     }
     return $FinalMsg
 }
@@ -2033,21 +2064,21 @@ function Invoke-CanvasReportMonitor {
     try {
         $PreviousIterations++
         if ($PreviousIterations -le $MaxIterations){
-            Write-Verbose ("Monitor check of report job {0} number {1}" -f $ReportJobId,$PreviousIterations.ToString())
+            Write-Host ("Monitor check of report job {0} number {1}" -f $ReportJobId,$PreviousIterations.ToString())
             $CurrentStatus = Get-CanvasReportStatus -ReportName $ReportName -ReportId $ReportJobId -TokenFilePath $TokenFilePath -Account $Account
             switch ($CurrentStatus.status) {                
                 { @("complete") -contains $_} {  
-                    Write-Verbose ("Report status is {0}" -f $CurrentStatus.status)
+                    Write-Host ("Report status is {0}" -f $CurrentStatus.status)
                     $FinalStatus = $CurrentStatus.status
                     $FinalMsg = $CurrentStatus
                 }
                 { @("error") -contains $_} { 
                     $FinalStatus = $CurrentStatus.status
                     $FinalMsg = "Report job {0} failed with message:{1}" -f $ReportJobId,$CurrentStatus.parameters.extra_text
-                    Write-Verbose $FinalMsg
+                    Write-Host $FinalMsg
                 }    
                 { @("created") -contains $_} {  
-                    Write-Verbose ("Current status is {0}" -f $CurrentStatus.status)
+                    Write-Host ("Current status is {0}" -f $CurrentStatus.status)
                     Start-Sleep -Seconds $SleepSeconds
                     $ReMonitor = @{
                         ReportJobId = $ReportJobId
@@ -2061,7 +2092,7 @@ function Invoke-CanvasReportMonitor {
                     Invoke-CanvasReportMonitor @ReMonitor
                 }
                 Default {
-                    Write-Verbose ("Current status is {0}" -f $CurrentStatus.status)
+                    Write-Host ("Current status is {0}" -f $CurrentStatus.status)
                     Start-Sleep -Seconds $SleepSeconds
                     $ReMonitor = @{
                         ReportJobId = $ReportJobId
@@ -2087,8 +2118,8 @@ function Invoke-CanvasReportMonitor {
     catch {
         $FinalStatus = "error"
         $FinalMsg = "Error monitoring state for report job {0}" -f $SisJobId
-        Write-Verbose $_
-        Write-Verbose $_.ScriptStackTrace
+        Write-Host $_
+        Write-Host $_.ScriptStackTrace
     }
     return @{status=$FinalStatus;message=$FinalMsg}
 }
@@ -2685,7 +2716,7 @@ function Get-CanvasCourseAnnouncements {
         [string]$TokenFilePath
     )
     # format the api url
-    $ApiUrl = "https://{0}/api/v1/announcements?context_code[course]={1}&latest_only=true" -f $global:CanvasSite, $CourseId
+    # $ApiUrl = "https://{0}/api/v1/announcements?context_code[course]={1}&latest_only=true" -f $global:CanvasSite, $CourseId
     $ApiUrl2 = "https://{0}/api/v1/courses/{1}/discussion_topics?only_announcements=true" -f $global:CanvasSite, $CourseId
     
     # configure upload parameters
@@ -2697,6 +2728,47 @@ function Get-CanvasCourseAnnouncements {
     # send the update
     $ListResult = Get-CanvasItemListWithVars @DataParams
     return $ListResult
+}
+
+function Update-CanvasPageContents {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$CanvasCourse
+        
+        ,[Parameter(Mandatory=$true)]
+        [string]$PageUrlOrId
+        
+        ,[Parameter(Mandatory=$false)]
+        [string]$ContentBody=""
+        
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # format the api url
+    #PUT /api/v1/courses/:course_id/pages/:url_or_id
+    $ApiUrl = "https://{0}/api/v1/courses/{1}/pages/{2}" -f $global:CanvasSite, $CanvasCourse, $PageUrlOrId
+    # structure the new data
+    $NewData = @{
+        wiki_page = @{
+            body = $ContentBody
+        }
+    }
+    
+    # format the data for upload
+    $NewDataBody = $NewData|ConvertTo-Json
+    
+    # configure upload parameters
+    $NewDataParams = @{
+        CanvasApiUrl = $ApiUrl
+        RequestBody = $NewDataBody
+        ApiVerb = "PUT"
+        TokenFilePath = $TokenFilePath
+    }
+    # send the update
+    $NewItemResult = Send-CanvasUpdate @NewDataParams
+    return $NewItemResult
 }
 
 <#

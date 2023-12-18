@@ -1,5 +1,5 @@
-import-module ~\dev\BbExtracts\scripts\Canvas-API-Lib.ps1
-import-module ~\dev\BbExtracts\scripts\Canvas-API-Tasks.ps1
+import-module ~\dev\LMS-Automation\scripts\Canvas-API-Lib.ps1
+import-module ~\dev\LMS-AdminTasks\Canvas-API-Tasks.ps1
 $beta = "school.beta.instructure.com"
 $prod = "school.instructure.com"
 $global:CanvasSite = $prod
