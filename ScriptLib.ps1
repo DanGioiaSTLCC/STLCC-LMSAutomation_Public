@@ -250,8 +250,8 @@ function Send-AutomationCompletedMail {
 	param(
 		$MsgSubject
 		,$MsgBody
-		,$MsgRecipient = "bbadmin@stlcc.edu"
-		,$MsgSender = "noreply-LMSAutomation@stlcc.edu"
+		,$MsgRecipient = "lmsadmin@domain.edu"
+		,$MsgSender = "noreply-LMSAutomation@domain.edu"
 	)
 	# splat message arguments
 	$argsMsg = @{}
@@ -260,7 +260,7 @@ function Send-AutomationCompletedMail {
 	$argsMsg.Add("Subject","$MsgSubject")
 	$argsMsg.Add("Body","$MsgBody")
 	$argsMsg.Add("Attachments",$global:strPathLogFile)
-	$argsMsg.Add("SmtpServer","smtp.stlcc.edu")	
+	$argsMsg.Add("SmtpServer","smtp.domain.edu")	
 	# use args to send message
 	if (Get-Module -ListAvailable -Name PoshMailKit){
 		Send-MKMailMessage @argsMsg
