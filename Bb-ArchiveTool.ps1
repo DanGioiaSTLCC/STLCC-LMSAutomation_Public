@@ -13,35 +13,35 @@ Add-Type -AssemblyName PresentationFramework
     x:Name="Window"
     Title="Bb Archive Tools" Height="600" Width="1300" FontSize="14">
     <Grid x:Name="LayoutGrid">
-        <Grid.RowDefinitions>
+    <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto" MaxHeight="1000"/>
         </Grid.RowDefinitions>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="Auto" MinWidth="331"/>
             <ColumnDefinition Width="Auto" MinWidth="26"/>
         </Grid.ColumnDefinitions>
         <Label x:Name="lblTxtArchPath" Content="Path to Extracted Bb Course Archvie" Grid.Column="0" Grid.Row="0" FontSize="14"/>
-        <TextBox x:Name="txtArchPath" Grid.Column="0" Grid.Row="1" Margin="10,10,0,94" />
-        <Button x:Name="btnManifest" Content="Read Manifest" Grid.Column="0" Grid.Row="1" FontSize="14" Margin="10,42,10,43"/>
+        <TextBox x:Name="txtArchPath" Grid.Column="0" Grid.Row="1" Margin="10,10,0,0" VerticalAlignment="Top" Height="53.62" />
+        <Button x:Name="btnManifest" Content="Read Manifest" Grid.Column="0" Grid.Row="1" FontSize="14" Margin="10,42,10,43" HorizontalAlignment="Right" VerticalAlignment="Center"/>
         <Button x:Name="btnUserInfo" Content="User Info" Grid.Column="1" HorizontalAlignment="Left" Margin="68,10,-172,0" VerticalAlignment="Top" Width="140"/>
         <Button x:Name="btnGradeColumns" Content="Grade Columns" Grid.Column="1" HorizontalAlignment="Left" Margin="68,14,-173,0" Grid.Row="1" VerticalAlignment="Top" Width="140"/>
         <Button x:Name="btnGradesForUser" Content="Grades for User" Grid.Column="1" HorizontalAlignment="Left" Margin="68,56,-174,-15" Grid.Row="1" VerticalAlignment="Top" Width="140"/>
         <TextBox x:Name="txtUsername" Grid.Column="1" HorizontalAlignment="Left" Height="23" Margin="68,94,-169,-50" Grid.Row="1" TextWrapping="Wrap" Text="username" VerticalAlignment="Top" Width="140"/>
-
         <Label Content="Data" HorizontalAlignment="Left" Margin="10,154,0,-63" Grid.Row="1" VerticalAlignment="Top" Height="36"/>
         <TextBlock x:Name="statusMsg" Grid.Column="1" HorizontalAlignment="Left" Margin="258,20,-292,0" TextWrapping="Wrap" Text="Status Messages" VerticalAlignment="Top" Height="112" Grid.RowSpan="2" Width="235"/>
         <Button x:Name="btnClear" Content="Clear" Grid.Column="1" HorizontalAlignment="Left" Margin="71,131,0,-28" Grid.Row="1" VerticalAlignment="Top" Width="75"/>
-        
-        <TabControl HorizontalAlignment="Left" Height="291" Margin="10,190,-407,-351" Grid.Row="1" VerticalAlignment="Top" Width="1207" Grid.ColumnSpan="2">
+        <Button x:Name="btnVideos" Content="Videos" HorizontalAlignment="Left" Margin="20,114,0,0" Grid.Row="1" VerticalAlignment="Top" Width="75"/>
+
+        <TabControl Grid.Row="2" Grid.ColumnSpan="2" Margin="10,190,0,0" MaxHeight="800">
             <TabItem Header="Course Info" Name="tabCourseInfo">
                 <TextBox Name="CourseInfo"
-                TextWrapping="Wrap"
-                AcceptsReturn="True"
-                VerticalScrollBarVisibility="Visible"
-                ></TextBox>
+            TextWrapping="Wrap"
+            AcceptsReturn="True"
+            ></TextBox>
             </TabItem>
             <TabItem Header="Users" Name="tabUsers">
+            <ScrollViewer MaxHeight="775" MaxWidth="1900" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Visible">
                 <DataGrid Name="DatagridPeople" AutoGenerateColumns="True">
                     <DataGrid.Columns>
                         <DataGridTextColumn Header="Username" Binding="{Binding USERNAME}"/>
@@ -51,10 +51,13 @@ Add-Type -AssemblyName PresentationFramework
                         <DataGridTextColumn Header="First Name" Binding="{Binding GIVEN}"/>
                         <DataGridTextColumn Header="Last Name" Binding="{Binding FAMILY}"/>
                         <DataGridTextColumn Header="Email Address" Binding="{Binding EMAIL}"/>
+                        <DataGridTextColumn Header="Last Access" Binding="{Binding LASTACCESS}"/>
                     </DataGrid.Columns>
                 </DataGrid>
+            </ScrollViewer>
             </TabItem>
             <TabItem Header="Grades" Name="tabGradeHistory">
+            <ScrollViewer MaxHeight="775" MaxWidth="1900" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Visible">
                 <DataGrid Name="DatagridGrades">
                     <DataGrid.Columns>
                         <DataGridTextColumn Header="Grade" Binding="{Binding GRADE}"/>
@@ -76,8 +79,10 @@ Add-Type -AssemblyName PresentationFramework
                         <DataGridTextColumn Header="Multiple Attempts" Binding="{Binding MULTIPLEATTEMPTS}"/>
                     </DataGrid.Columns>
                 </DataGrid>
+            </ScrollViewer>
             </TabItem>
             <TabItem Header="Grade Columns" Name="tabGradeColumns">
+            <ScrollViewer MaxHeight="775" MaxWidth="1900" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Visible">
                 <DataGrid Name="DatagridGradeColumns">
                     <DataGrid.Columns>
                         <DataGridTextColumn Header="Outcome ID" Binding="{Binding GRADABLE_ITEM_ID}"/>
@@ -93,7 +98,21 @@ Add-Type -AssemblyName PresentationFramework
                         <DataGridTextColumn Header="Formulation" Binding="{Binding FORMULATION}"/>
                     </DataGrid.Columns>
                 </DataGrid>
-            </TabItem>        
+                </ScrollViewer>
+            </TabItem>
+            <TabItem Header="Videos" Name="tabVideos">
+            <ScrollViewer MaxHeight="775" MaxWidth="1900" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Visible">    
+            <DataGrid Name="DatagridVideos" >
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Res File ID" Binding="{Binding RESOURCE_FILE}"/>
+                        <DataGridTextColumn Header="Cont Title" Binding="{Binding RESOURCE_TITLE}"/>
+                        <DataGridTextColumn Header="File Path" Binding="{Binding FILE_PATH }"/>
+                        <DataGridTextColumn Header="Link File Name" Binding="{Binding FILE_NAME}"/>
+                        <DataGridTextColumn Header="File Size (MB)" Binding="{Binding FILE_SIZE}"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </ScrollViewer>
+            </TabItem>
         </TabControl>
     </Grid>
 </Window>
@@ -117,6 +136,9 @@ $TabGradeColumns = $window.FindName("tabGradeColumns")
 $TabGradeHistory = $window.FindName("tabGradeHistory")
 $tabUsers = $window.FindName("tabUsers")
 $tabCourseInfo = $window.FindName("tabCourseInfo")
+$tabVideos = $window.FindName("tabVideos")
+$videosButton = $window.FindName("btnVideos")
+$DataOutputVides = $window.FindName("DatagridVideos")
 
 $manifestButton.Add_Click({
     $script:WorkingDirectory = $inputDir.Text
@@ -131,11 +153,11 @@ $manifestButton.Add_Click({
             $gradebook = $ManifestResources.node.resource|Where-Object{$_."type" -eq 'course/x-bb-gradebook'}
             $UserInfo = $ManifestResources.node.resource | Where-Object{$_."type" -eq 'course/x-bb-user'}
             $Memberships = $ManifestResources.node.resource | Where-Object{$_."type" -eq 'membership/x-bb-coursemembership'}
+            $TOC = $ManifestResources.node.resource | Where-Object{$_."type" -eq 'course/x-bb-coursetoc'}
             $CourseInfo = select-xml -Path "$($script:WorkingDirectory)\$($CrsSettings.file)" -XPath "/COURSE"
             $Msg += "`n Users:$($UserInfo.file)"
             $Msg += "`n Enroll:$($Memberships.file)"
             $Msg += "`n Grades:$($gradebook.file)"
-            #$statusBlock.Text = $Msg
             $Msg += "`n-------------------"
             $Msg += "`n Course ID:$($CourseInfo.node.COURSEID.value)"
             $Msg += "`n Course Name:$($CourseInfo.node.TITLE.value)"
@@ -143,6 +165,10 @@ $manifestButton.Add_Click({
             $Msg += "`n Modified: $($CourseInfo.node.DATES.UPDATED.value)"
             $Msg += "`n Open: $($CourseInfo.node.DATES.COURSESTART.value)"
             $Msg += "`n Close: $($CourseInfo.node.DATES.COURSEEND.value)"
+            $Msg += "`n ---- Course Menu ----"
+            foreach ($contItem in $TOC){
+                $Msg += "`n $($contItem.title) ($($contItem.identifier))"
+            }
             $DataOutputCourseInfo.Text = $Msg
             $tabCourseInfo.IsSelected = $true;
         }
@@ -171,7 +197,8 @@ $userButton.Add_Click({
                 BATCHUID = $Person.BATCHUID.value;
                 GIVEN = $Person.NAMES.GIVEN.value;
                 FAMILY = $Person.NAMES.FAMILY.value;
-                EMAIL = $Person.EMAILADDRESS.value
+                EMAIL = $Person.EMAILADDRESS.value;
+                LASTACCESS = $MemberInfo.DATES.LASTACCESS.value;
             })
         }
         $statusBlock.Text = "finished outputing users"
@@ -252,14 +279,62 @@ $gradeColumnsButton.Add_Click({
 })
 
 $clearButton.Add_Click({
-    $statusBlock.Text = "button not configured yet"
+    $statusBlock.Text = ""
 })
-
+$videosButton.Add_Click({
+    if (Test-Path $script:ManifestPath){
+        $tabVideos.IsSelected = $true;
+        $ManifestResources = Select-Xml -Path "$script:ManifestPath" -XPath "/manifest/resources"
+        $AllDocs = $ManifestResources.node.resource|Where-Object{$_."type" -in ('resource/x-bb-document','resource/x-bb-blog')}
+        $statusBlock.Text = $AllDocs.Count.ToString();
+        foreach ($doc in $AllDocs){
+            $ResourceTitle = $doc.title
+            $ResourceInfoFile = $doc.file
+            $ResourceInfo = Select-Xml -Path "$($script:WorkingDirectory)\$($ResourceInfoFile)" -XPath "/CONTENT"
+            if ($ResourceInfo.Node.CONTENTHANDLER.value -eq "resource/x-bb-video"){
+                #"\csfiles\home_dir\" 
+                foreach ($Attachment in $ResourceInfo.Node.FILES.FILE){
+                    $LinkName = $Attachment.LINKNAME.value
+                    $LinkExtension = $LinkName.substring($LinkName.length - 4, 4).ToLower()
+                    $LinkFilename = $Attachment.NAME.ToString().Replace('/','\')
+                    $LinkFilename = $LinkFilename.Substring(1,($LinkFilename.length - 1))
+                    $FileName = "{0}\csfiles\home_dir\__{1}{2}" -f $script:WorkingDirectory,$LinkFilename,$LinkExtension
+                    $FileSize = [int]($Attachment.SIZE.value / (1024*1024))
+                    $DataOutputVides.AddChild([PSCustomObject]@{
+                        RESOURCE_FILE = $ResourceInfoFile
+                        RESOURCE_TITLE = $ResourceTitle
+                        FILE_PATH = $FileName
+                        FILE_NAME = $LinkName
+                        FILE_SIZE = $FileSize
+                    })
+                }
+            }
+            else {
+                foreach ($Attachment in $ResourceInfo.Node.FILES.FILE){
+                    $LinkName = $Attachment.LINKNAME.value
+                    $LinkExtension = $LinkName.substring($LinkName.length - 4, 4).ToLower()
+                    if ($LinkExtension -eq ".mp4"){
+                        $LinkFilename = $Attachment.NAME.ToString().Replace('/','\')
+                        $LinkFilename = $LinkFilename.Substring(1,($LinkFilename.length - 1))
+                        $FileName = "{0}\csfiles\home_dir\__{1}{2}" -f $script:WorkingDirectory,$LinkFilename,$LinkExtension
+                        $FileSize = [int]($Attachment.SIZE.value / (1024*1024))
+                        $DataOutputVides.AddChild([PSCustomObject]@{
+                            RESOURCE_FILE = $ResourceInfoFile
+                            RESOURCE_TITLE = $ResourceTitle
+                            FILE_PATH = $FileName
+                            FILE_NAME = $LinkName
+                            FILE_SIZE = $FileSize
+                        })
+                    }
+                }                
+            }
+        }
+    }
+})
 # display the WPF window
 $window.ShowDialog()
 
 <#
 # ## ### #### ##### ###### ####### ######## ######### ########## ############## ############### ################ ################# 
-$WorkingDirectory = "C:\TEMP\ArhiveFixer" 
 #>
 

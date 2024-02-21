@@ -9,6 +9,7 @@ Set VerbosePreference equal to Continue to read any console output
 Canvas tokens can be retrieved by running Get-CanvasTokenString
 Canvas token files can be created by running New-CanvasTokenFile
 Generic GET requests can be made by using a fully formed API route in Get-CanvasItem
+For header and code info in GET requests can be made by using a fully formed API route in Get-CanvasItemWithVars
 
 ID Substitutions:
 Copied and pasted from https://canvas.instructure.com/doc/api/file.object_ids.html
@@ -235,9 +236,9 @@ function Get-CanvasItemList {
     }
     # if paging specified add it the url
     if ($PerPage -ne 10){
-        if (($CanvasApiUrl -contains "per_page") -eq $false){
+        if (($CanvasApiUrl.Contains("per_page")) -eq $false){
             # check if there are already query parameters
-            if (($CanvasApiUrl -contains "`?") -eq $false){
+            if ($CanvasApiUrl.Contains("`?") -eq $false){
                 $CanvasApiUrl += "?per_page={0}" -f $PerPage.ToString()
             }
             else {
@@ -245,7 +246,7 @@ function Get-CanvasItemList {
             }
         }
     }
-
+    Write-Verbose "original URL is $CanvasApiUrl"
     $TokenString = Get-CanvasTokenString $TokenFilePath
     # add follow rel link for the command to automatically follw the next result set link
     $result = Invoke-RestMethod -Method GET -Headers @{"Authorization"="Bearer $TokenString"} -Uri $CanvasApiUrl -FollowRelLink -MaximumFollowRelLink $MaxPages
@@ -284,9 +285,9 @@ function Get-CanvasItemListWithVars {
     }
     # if paging specified add it the url
     if ($PerPage -ne 10){
-        if (($CanvasApiUrl -contains "per_page") -eq $false){
+        if (($CanvasApiUrl.Contains("per_page")) -eq $false){
             # check if there are already query parameters
-            if (($CanvasApiUrl -contains "`?") -eq $false){
+            if (($CanvasApiUrl.Contains("`?")) -eq $false){
                 $CanvasApiUrl += "?per_page={0}" -f $PerPage.ToString()
             }
             else {
@@ -850,6 +851,9 @@ function New-CanvasMembership {
         { @("ea","eduassist","eduassistant","educationalassistant") -contains $_}{
             $Enrollment.Add("role_id","28")
         }
+        { @("communicator","tutor") -contains $_}{
+            $Enrollment.Add("role_id","22")
+        }
         { @("3","4","5","6","7","13","22","23","25","26","28") -contains $_} { 
             $Enrollment.Add("role_id",$CourseRole)
         }
@@ -896,10 +900,16 @@ function Get-CanvasUserMemberships {
         [string]$CanvasUser,
        
         [Parameter(Mandatory=$true)]
-        [string]$TokenFilePath            
+        [string]$TokenFilePath,
+        
+        [Parameter(Mandatory=$false)]
+        [bool]$InactiveList=$false
     )
     # build the URL
     $CourseUsersUrl = "https://{0}/api/v1/users/{1}/enrollments" -f $global:CanvasSite,$CanvasUser
+    if ($InactiveList){
+        $CourseUsersUrl = $CourseUsersUrl + "?state=inactive"
+    }
     # construct the parameters
     $MembershipListParams = @{
         CanvasApiUrl = $CourseUsersUrl
@@ -2764,6 +2774,108 @@ function Update-CanvasPageContents {
         CanvasApiUrl = $ApiUrl
         RequestBody = $NewDataBody
         ApiVerb = "PUT"
+        TokenFilePath = $TokenFilePath
+    }
+    # send the update
+    $NewItemResult = Send-CanvasUpdate @NewDataParams
+    return $NewItemResult
+}
+
+function Get-CanvasCustomGradeColumn {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        [string]$CourseId
+        
+        ,[Parameter(Mandatory)]
+        [string]$ColumnId
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # format the api url
+    $ApiUrl = "https://{0}/api/v1/courses/{1}/custom_gradebook_columns/{2}" -f $global:CanvasSite, $CourseId, $ColumnId
+
+    # send the request
+    $ItemResult = Get-CanvasItemWithVars -CanvasApiUrl $ApiUrl -TokenFilePath $TokenFilePath
+    return $ItemResult
+}
+
+function Get-CanvasCustomGradeColumns {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        [string]$CourseId
+        
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # format the api url
+    $ApiUrl = "https://{0}/api/v1/courses/{1}/custom_gradebook_columns" -f $global:CanvasSite, $CourseId
+
+    # send the request
+    $ItemResult = Get-CanvasItemListWithVars -CanvasApiUrl $ApiUrl -TokenFilePath $TokenFilePath
+    return $ItemResult
+}
+
+function Remove-CanvasCustomGradeColumn {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        [string]$CourseId
+        
+        ,[Parameter(Mandatory)]
+        [string]$ColumnId
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # format the api url
+    $ApiUrl = "https://{0}/api/v1/courses/{1}/custom_gradebook_columns/{2}" -f $global:CanvasSite, $CourseId, $ColumnId
+
+    # configure upload parameters
+    $DeleteParams = @{
+        CanvasApiUrl = $ApiUrl
+        ApiVerb = "DELETE"
+        TokenFilePath = $TokenFilePath
+    }
+
+    # send the update
+    $ItemResult = Send-CanvasUpdate @DeleteParams
+    return $ItemResult
+}
+
+function New-CanvasCustomGradeColumn {
+    [CmdletBinding()]
+    param (
+        # course identifier
+        [Parameter(Mandatory)]
+        [string]$CourseId
+        # title of new notes column
+        ,[Parameter(Mandatory)]
+        [string]$ColumnTitle
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory)]
+        [string]$TokenFilePath
+    )
+    # format the api url
+    $ApiUrl = "https://{0}/api/v1/courses/{1}/custom_gradebook_columns" -f $global:CanvasSite, $CourseId, $ColumnTitle
+    # structure the new data
+    $NewData = @{
+        column = @{
+            title = $ColumnTitle
+            hidden = $false
+        }
+    }
+
+    # format the data for upload
+    $NewDataBody = $NewData|ConvertTo-Json
+    
+    # configure upload parameters
+    $NewDataParams = @{
+        CanvasApiUrl = $ApiUrl
+        RequestBody = $NewDataBody
+        ApiVerb = "POST"
         TokenFilePath = $TokenFilePath
     }
     # send the update
