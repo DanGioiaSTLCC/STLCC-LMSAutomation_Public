@@ -1,15 +1,14 @@
 <#
 .SYNOPSIS 
-Canvas REST API classes and functions as well as integration upload
+Canvas REST API functions as well as integration upload
 All functions tested against PowerShell 7 only
 Most if not all functions included assume the token is or will be stored in a secure string file
-Set VerbosePreference equal to Continue to read any console output
+Set VerbosePreference equal to Continue to read details of operations
 
 .DESCRIPTION
 Canvas tokens can be retrieved by running Get-CanvasTokenString
 Canvas token files can be created by running New-CanvasTokenFile
 Generic GET requests can be made by using a fully formed API route in Get-CanvasItem
-For header and code info in GET requests can be made by using a fully formed API route in Get-CanvasItemWithVars
 
 ID Substitutions:
 Copied and pasted from https://canvas.instructure.com/doc/api/file.object_ids.html
@@ -36,7 +35,7 @@ Add-Type -AssemblyName System.Web
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $global:CanvasSite = "school.beta.instructure.com"
 $global:LorSite = "lor.instructure.com"
-
+$global:CourseRoleIds = @()
 function Get-UrlEncodedString {
     [CmdletBinding()]
     param (
@@ -118,6 +117,7 @@ function Get-IsoDate {
     $DateString = Get-Date $DateInputString -AsUTC -Format u
     return $DateString.ToString()
 }
+Set-Alias -Name ConvertTo-IsoDate -Value Get-IsoDate
 
 function Get-LocalDate {
     [CmdletBinding()]
@@ -128,6 +128,7 @@ function Get-LocalDate {
     $DateString = (Get-Date $DateInputString).ToLocalTime()
     return $DateString.ToString()
 }
+Set-Alias -Name ConvertTo-LocalTime -Value Get-LocalDate
 
 function Send-CanvasUpdate {
     [CmdletBinding()]
@@ -166,6 +167,54 @@ function Send-CanvasUpdate {
     $TokenString = $null
     Remove-Variable -Name "TokenString"
     return $result
+}
+
+function Send-CanvasUpdateWithVars {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$CanvasApiUrl,
+
+        [Parameter(Mandatory=$false)]
+        [string]$RequestBody="",
+
+        [Parameter(Mandatory=$false)]
+        [string]$ApiVerb="POST",
+
+        [Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    $TokenString = Get-CanvasTokenString $TokenFilePath
+    $RestParams = @{
+        Method = $ApiVerb
+        Uri = $CanvasApiUrl
+        Headers = @{
+            Authorization = "Bearer $TokenString"
+        }
+        ResponseHeadersVariable = "ResponseHeaders"
+        StatusCodeVariable = "StatusCodeInfo"
+        SkipHttpErrorCheck = $true
+    }
+    if ($RequestBody -ne ""){
+        $RestParams.Add("Body",$RequestBody)
+        $RestParams.Add("ContentType","application/json")
+    }
+    $result = Invoke-RestMethod @RestParams
+    <#
+    if ($ResponseHeaders.Status -like "40*"){
+        $ResponseHeaders
+        Exit 55
+    }
+    #>
+    # clear token data
+    $TokenString = $null
+    Remove-Variable -Name "TokenString"
+    $ReturnData = @{
+        result = $result
+        StatusCode = $StatusCodeInfo
+        Headers = $ResponseHeaders
+    }
+    return $ReturnData
 }
 
 function Get-CanvasItem {
@@ -825,6 +874,13 @@ function New-CanvasMembership {
     )
     # build the route
     $EnrollmentUrl = "https://{0}/api/v1/courses/{1}/enrollments" -f $global:CanvasSite,$CanvasCourse
+    
+    # get list of acceptable course roles
+    if ($global:CourseRoleIds.count -eq 0){
+        $RoleList = Get-CanvasRoles -TokenFilePath $TokenFilePath | Where-Object{$_.base_role_type -like "*Enrollment"}
+        $RoleList | ForEach-Object{$global:CourseRoleIds += $_.id.tostring()}
+    }
+
     # build the enrollment body
     $Enrollment = @{
         "user_id" = $CanvasUser
@@ -848,13 +904,13 @@ function New-CanvasMembership {
             $CourseRole = "TeacherEnrollment"
             $Enrollment.Add("type",$CourseRole)
         }
-        { @("ea","eduassist","eduassistant","educationalassistant") -contains $_}{
+        { @("ea","eduassist","eduassistant","educationalassistant") -contains $_} {
             $Enrollment.Add("role_id","28")
         }
-        { @("communicator","tutor") -contains $_}{
+        { @("communicator","tutor") -contains $_} {
             $Enrollment.Add("role_id","22")
         }
-        { @("3","4","5","6","7","13","22","23","25","26","28") -contains $_} { 
+        { $global:CourseRoleIds -contains $_} {
             $Enrollment.Add("role_id",$CourseRole)
         }
         Default {Write-Host "unrecognized role definition: $($CourseRole)";break;}
@@ -866,6 +922,7 @@ function New-CanvasMembership {
     $NewEnrollment = Send-CanvasUpdate -CanvasApiUrl $EnrollmentUrl -RequestBody $EnrollmentBody -TokenFilePath $TokenFilePath    
     return $NewEnrollment
 }
+Set-Alias -Name New-CanvasEnrollment -Value New-CanvasMembership
 
 function Get-CanvasCourseMemberships {
     [CmdletBinding()]
@@ -1362,7 +1419,7 @@ function Get-CanvasRoleDetails {
     )
     begin{
         # write the csv file with header
-        Set-Content -Path $OutFile -Value "Permission,Enabled,ReadOnly,Locked,Explicit,Self,Descendants"
+        Set-Content -Path $OutFile -Value "Permission,Enabled,ReadOnly,Locked,Explicit,Self,Descendants,Group"
         
         $RoleUrl = "https://{0}/api/v1/accounts/1/roles/{1}" -f $global:CanvasSite,$RoleId
         
@@ -1381,9 +1438,10 @@ function Get-CanvasRoleDetails {
             $expl = $Permission.explicit
             $self = $Permission.applies_to_self
             $dscn = $Permission.applies_to_descendants
+            $grp = $Permission.group
             
             # write the settings to the csv file
-            Add-Content -path "$OutFile" -Value "$PropertyName,$enbl,$ronl,$lock,$expl,$self,$dscn"
+            Add-Content -path "$OutFile" -Value "$PropertyName,$enbl,$ronl,$lock,$expl,$self,$dscn,$grp"
         }
         return $RoleData
     }
@@ -2882,6 +2940,85 @@ function New-CanvasCustomGradeColumn {
     $NewItemResult = Send-CanvasUpdate @NewDataParams
     return $NewItemResult
 }
+
+function New-CanvasSubAccount {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$ParrentAccountId
+        
+        ,[Parameter(Mandatory=$true)]
+        [string]$Name
+
+        ,[Parameter(Mandatory=$true)]
+        [string]$SisId
+
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # format the api url
+    $ApiUrl = "https://{0}/api/v1/accounts/{1}/sub_accounts" -f $global:CanvasSite, $ParrentAccountId
+    # structure the new data
+    $NewData = @{
+        account = @{
+            name = $Name
+            sis_account_id = $SisId
+        }
+    }
+    
+    # format the data for upload
+    $NewDataBody = $NewData|ConvertTo-Json
+    
+    # configure upload parameters
+    $NewDataParams = @{
+        CanvasApiUrl = $ApiUrl
+        RequestBody = $NewDataBody
+        ApiVerb = "POST"
+        TokenFilePath = $TokenFilePath
+    }
+    # send the update
+    $NewItemResult = Send-CanvasUpdate @NewDataParams
+    return $NewItemResult
+}
+
+function Update-CanvasCourseAccount {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        [string]$CourseId
+        
+        ,[Parameter(Mandatory)]
+        [string]$NewAccountId
+        
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # format the api url
+    $ApiUrl = "https://{0}/api/v1/courses/{1}" -f $global:CanvasSite, $CourseId
+    # structure the new data
+    $NewData = @{
+        course = @{
+            account_id = $NewAccountId
+        }
+    }
+
+    # format the data for upload
+    $NewDataBody = $NewData|ConvertTo-Json
+    
+    # configure upload parameters
+    $NewDataParams = @{
+        CanvasApiUrl = $ApiUrl
+        RequestBody = $NewDataBody
+        ApiVerb = "PUT"
+        TokenFilePath = $TokenFilePath
+    }
+    # send the update
+    $ItemResult = Send-CanvasUpdate @NewDataParams
+    return $ItemResult
+}
+
 
 <#
 function new-genericfunction {
