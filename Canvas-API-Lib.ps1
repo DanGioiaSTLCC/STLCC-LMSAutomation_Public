@@ -31,8 +31,8 @@ sis_user_id
 #>
 
 Add-Type -AssemblyName System.Web
-# not sure if PowerShell or Windows issue but not setting TLS 1.2 can cause issues randomly so I always set it
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+# not sure if PowerShell or Windows issue but not setting TLS can cause issues randomly by using default so always set it
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls13
 $global:CanvasSite = "school.beta.instructure.com"
 $global:LorSite = "lor.instructure.com"
 $global:CourseRoleIds = @()
@@ -3019,6 +3019,66 @@ function Update-CanvasCourseAccount {
     return $ItemResult
 }
 
+function Get-CanvasModuleItems {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        [string]$CourseId
+
+        ,[Parameter(Mandatory)]
+        [string]$ModuleId
+
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    $ApiUrl = "https://{0}/api/v1/courses/{1}/modules/{2}/items" -f $global:CanvasSite, $CourseId, $ModuleId
+    $ModuleItems = Get-CanvasItemList -CanvasApiUrl $ApiUrl -TokenFilePath $TokenFilePath -PerPage 99
+    return $ModuleItems
+}
+
+function Set-CanvasModuleItemNewTabStatus {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        [string]$CourseId
+        
+        ,[Parameter(Mandatory)]
+        [string]$ModuleId
+
+        ,[Parameter(Mandatory)]
+        [string]$ItemId
+
+        ,[Parameter(Mandatory)]
+        [bool]$OpenInNewTab
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # format the api url
+    $ApiUrl = "https://{0}/api/v1/courses/{1}/modules/{2}/items/{3}" -f $global:CanvasSite, $CourseId, $ModuleId, $ItemId
+    Write-Verbose "UpdateURL $ApiUrl"
+    # structure the new data
+    $NewData = @{
+        module_item = @{
+            new_tab = $OpenInNewTab
+        }
+    }
+
+    # format the data for upload
+    $NewDataBody = $NewData|ConvertTo-Json
+    
+    # configure upload parameters
+    $NewDataParams = @{
+        CanvasApiUrl = $ApiUrl
+        RequestBody = $NewDataBody
+        ApiVerb = "PUT"
+        TokenFilePath = $TokenFilePath
+    }
+    # send the update
+    $UpdateItemResult = Send-CanvasUpdate @NewDataParams
+    return $UpdateItemResult
+}
 
 <#
 function new-genericfunction {
