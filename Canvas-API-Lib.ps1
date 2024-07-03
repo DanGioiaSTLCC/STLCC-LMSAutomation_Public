@@ -79,6 +79,12 @@ function Get-Base64String {
 }
 
 function Get-CanvasSisSshaPasswordText {
+    <#
+    .SYNOPSIS
+    creaet a hashed value to include in an SIS user file to upload
+    see https://canvas.instructure.com/doc/api/file.sis_csv.html
+    one can use Get-NewPasswordText to generate a salt value
+    #>
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true)]
@@ -910,6 +916,9 @@ function New-CanvasMembership {
         { @("communicator","tutor") -contains $_} {
             $Enrollment.Add("role_id","22")
         }
+        { @("accreditor","dean","reviewer") -contains $_} {
+            $Enrollment.Add("role_id","25")
+        }
         { $global:CourseRoleIds -contains $_} {
             $Enrollment.Add("role_id",$CourseRole)
         }
@@ -1097,6 +1106,7 @@ function New-CanvasCourseCopy {
     $MigrationTask = Send-CanvasUpdate -RequestBody $MigrationBody -CanvasApiUrl $MigrationUrl -TokenFilePath $TokenFilePath
     return $MigrationTask
 }
+Set-Alias -Name Start-CanvasCourseCopy -Value New-CanvasCourseCopy
 
 function New-CanvasCommonsImport {
     [CmdletBinding()]
@@ -1887,32 +1897,6 @@ function Get-CanvasLogonReportForTerm {
         [string]$TokenFilePath
     )
     # start a report    POST /api/v1/accounts/:account_id/reports/:report
-    # status of report  GET /api/v1/accounts/:account_id/reports/:report/:id
-    # parameter enrollment_term_id
-    <#
-        report                             title
-        ------                             -----
-        eportfolio_report_csv              Eportfolio Report
-        grade_export_csv                   Grade Export
-        mgp_grade_export_csv               MGP Grade Export
-        last_user_access_csv               Last User Access             @{enrollment_term_id=; course_id=; include_deleted=}
-        last_enrollment_activity_csv       Last Enrollment Activity
-        outcome_export_csv                 Outcome Export
-        outcome_results_csv                Outcome Results
-        provisioning_csv                   Provisioning
-        recently_deleted_courses_csv       Recently Deleted Courses
-        sis_export_csv                     SIS Export
-        student_assignment_outcome_map_csv Student Competency
-        students_with_no_submissions_csv   Students with no submissions
-        unpublished_courses_csv            Unpublished Courses
-        public_courses_csv                 Public Courses
-        course_storage_csv                 Course Storage
-        unused_courses_csv                 Unused Courses
-        zero_activity_csv                  Zero Activity                @{enrollment_term_id=; start_at=; course_id=}
-        user_access_tokens_csv             User Access Tokens
-        lti_report_csv                     LTI Report
-        user_course_access_log_csv         User Course Access Log    
-    #>
     $ReportStartUrl = "https://{0}/api/v1/accounts/{1}/reports/{2}" -f $global:CanvasSite,$Account,$ReportName
     $ReportParams = @{parameters = @{enrollment_term_id = $TermId}}|ConvertTo-Json
     Send-CanvasUpdate -ApiVerb "POST" -RequestBody $ReportParams -CanvasApiUrl $ReportStartUrl -TokenFilePath $TokenFilePath
@@ -2307,7 +2291,7 @@ function Set-CanvasToolVisibilityDefault {
     [string]$Visibility = "disabled"
     if ($Visible){$Visibility = "enabled"}
     $UpdateUrl = "https://{0}/api/v1/accounts/1/external_tools/{1}" -f $global:CanvasSite,$ToolId
-    $UpdateUrl += "?course_navigation[deafult]={2}&name={3}" -f $Visibility,$ToolName
+    $UpdateUrl += "?course_navigation[default]={0}&name={1}" -f $Visibility,$ToolName
     $UpdateParams = @{
         CanvasApiUrl = $UpdateUrl
         ApiVerb = "PUT"
@@ -2318,6 +2302,30 @@ function Set-CanvasToolVisibilityDefault {
 }
 
 function New-CanvasCourseSection {
+    <#
+    .SYNOPSIS
+    create a new section in an existing Canvas course
+
+    .PARAMETER CourseId
+    course identfier, use sis_course_id: for CRN
+
+    .PARAMETER NewSectionSisId
+    SIS ID to use for the new section
+
+    .PARAMETER NewSectionName
+    name for the new course section
+
+    .PARAMETER StartDate
+    local date (and optionally time) to use for the section access to begin for students
+    the function will convert the local time to the correct format in zulu
+
+    .PARAMETER EndDate
+    local date (and optionally time) to use for the section access to end for students
+    the function will convert the local time to the correct format in zulu
+
+    .PARAMETER Restricted
+    boolean to limit student enrollment participation to section dates. defaults to true
+    #>
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true)]
@@ -2543,6 +2551,31 @@ function Remove-CanvasCourseModules {
     }
 }
 
+function Remove-CanvasCourseModule {
+    [CmdletBinding()]
+    param(
+        # Parameter help description
+        [Parameter(Mandatory)]
+        [string]$CourseId
+
+        ,[Parameter(Mandatory)]
+        [string]$ModuleId
+
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    $ApiUrl = "https://{0}/api/v1/courses/{1}/modules/{2}" -f $global:CanvasSite, $CourseId, $ModuleId
+    # configure upload parameters
+    $DelDataParams = @{
+        CanvasApiUrl = $ApiUrl
+        ApiVerb = "DELETE"
+        TokenFilePath = $TokenFilePath
+    }
+    # send the update
+    $result = Send-CanvasUpdate @DelDataParams
+    Write-Host "module deleted $($result.name)"
+}
 function Get-CanvasCourseAssignmentGroups {
     [CmdletBinding()]
     param (
@@ -2570,7 +2603,7 @@ function Remove-CanvasCourseAssignmentGroup {
         [Parameter(Mandatory=$true)]
         [string]$CourseId
         
-        # canvas course identifier, for crn use prefix sis_course_id:
+        # assignment group ID
         ,[Parameter(Mandatory=$true)]
         [string]$AssignmentGroupId
 
@@ -3078,6 +3111,332 @@ function Set-CanvasModuleItemNewTabStatus {
     # send the update
     $UpdateItemResult = Send-CanvasUpdate @NewDataParams
     return $UpdateItemResult
+}
+
+function Set-CanvasCourseDateRestrictions {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$CourseId
+        
+        ,[Parameter(Mandatory=$false)]
+        [bool]$Restricted = $true
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # format the api url
+    $ApiUrl = "https://{0}/api/v1/courses/{1}/settings" -f $global:CanvasSite, $CourseId
+    # structure the new data
+    $NewData = @{
+        restrict_student_past_view = $Restricted
+        restrict_student_future_view = $Restricted
+    }
+
+    # format the data for upload
+    $NewDataBody = $NewData|ConvertTo-Json
+    
+    # configure upload parameters
+    $NewDataParams = @{
+        CanvasApiUrl = $ApiUrl
+        RequestBody = $NewDataBody
+        ApiVerb = "PUT"
+        TokenFilePath = $TokenFilePath
+    }
+    # send the update
+    $UpdateItemResult = Send-CanvasUpdate @NewDataParams
+    return $UpdateItemResult
+}
+
+function Get-CanvasCourseSettings{
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$CourseId
+        
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    $ApiUrl = "https://{0}/api/v1/courses/{1}/settings" -f $CanvasSite, $CourseId
+    $CourseSettings = Get-CanvasItem -CanvasApiUrl $ApiUrl -TokenFilePath $TokenFilePath
+    return $CourseSettings
+}
+
+function Get-PgSqlResults {
+    <#
+    .SYNOPSIS
+    get postgres sql query results
+
+    .PARAMETER ConnectionString
+    database connection string, use DSN name if one is configured
+
+    .PARAMETER DatabaseUser
+    Database connection username
+
+    .PARAMETER DatabasePass
+    Database connection password
+
+    .PARAMETER Query
+    SQL query to execute
+
+    .PARAMETER OutputType
+    query result output type: screen, csv, object
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$ConnectionString
+
+        ,[Parameter(Mandatory=$false)]
+        [string]$DatabaseUser
+
+        ,[Parameter(Mandatory=$false)]
+        [string]$DatabasePass
+
+        ,[Parameter(Mandatory)]
+        [string]$Query
+
+        ,[Parameter(Mandatory)]
+        [ValidateSet("object","csv","screen")]
+        [string]$OutputType
+    )
+    # Create output path for query results file
+    [string]$OutputDirectory = $env:SystemDrive + "\TEMP"
+    if (!(Test-Path -Path $OutputDirectory)){mkdir $OutputDirectory|out-null}
+    [string]$OutFile = $OutputDirectory + "\Canvas-PgData.csv"
+    $DbUser = $DatabaseUser.Trim()
+    $DbPass = Get-CanvasTokenString -KeeperFile $DatabasePass
+    try {
+        # define the database connection object
+        $Conn = New-Object -comobject ADODB.Connection
+    
+        # Open the database connection using the DSN
+        if ($null -ne $DatabaseUser -and $null -ne $DatabasePass){
+            $Conn.Open($ConnectionString,$DbUser,$DbPass)
+        }
+        else {
+            $Conn.Open($ConnectionString)
+        }
+    
+        # execute the query and handle the result
+        $RecordSet = $Conn.Execute("$Query")
+        if ($RecordSet.EOF -ne $true){
+            $RowCount = 0
+            while ($RecordSet.EOF -ne $True)
+            {
+                # get the column names
+                if ($RowCount -eq 0){
+                    [string]$HeaderString = ""
+                    foreach ($fielddata in $RecordSet.Fields) {
+                        $HeaderString += "," + $fielddata.Name
+                    }
+                    $HeaderString = $HeaderString.Trim(',')
+                    switch ($OutputType) {
+                        "screen" { Write-Host $HeaderString }
+                        { @("csv","object") -contains $_} { Set-Content -Path $OutFile -Value $HeaderString }
+                        Default { }
+                    }
+                }
+    
+                # build output row based on recordset row data
+                [string]$RowString = ""
+                $ColCount = 0
+                foreach ($Field in $RecordSet.Fields)
+                {
+                    # add row data
+                    if($ColCount -gt 0) {
+                        $RowString = $RowString + ",`"" + $Field.value + "`""
+                    }
+                    else {
+                        $RowString = "`"" + $Field.value + "`""
+                    }
+                    $ColCount++
+                }
+                switch ($OutputType) {
+                    "screen" { Write-Host $RowString }
+                    { @("csv","object") -contains $_} { Add-Content -Path $OutFile -Value $RowString }
+                    Default { }
+                }
+                $RowCount++
+                $RecordSet.MoveNext()
+            }
+        }
+        else {
+            Write-Host "No records retrieved from database"
+        }
+    }
+    catch {
+        Write-Host "data error"
+    }
+    finally {
+        # Close the connection
+        if ($Conn.State -ne 0){
+            $Conn.Close()
+        }
+    }
+    # return based on output selection
+    switch ($OutputType){
+        "screen" {
+            return "finished"
+        }
+        "csv" {
+            return $OutFile
+        }
+        "object"{
+            $ResultData = Import-Csv -Path $OutFile
+            return $ResultData
+        }
+    }
+}
+
+function Update-CanvasCourseEndDate {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$CourseId
+        
+        ,[Parameter(Mandatory=$true)]
+        [string]$EndDate
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # format the api url
+    $ApiUrl = "https://{0}/api/v1/courses/{1}" -f $global:CanvasSite,$CourseId
+    
+    # format date to ISO standard
+    $NewEndDate = Get-IsoDate -DateInputString $EndDate
+    
+    # structure the new data
+    $NewData = @{
+        course = @{
+            end_at = $NewEndDate
+        }
+    }
+
+    # format the data for upload
+    $NewDataBody = $NewData|ConvertTo-Json
+    
+    # configure upload parameters
+    $NewDataParams = @{
+        CanvasApiUrl = $ApiUrl
+        RequestBody = $NewDataBody
+        ApiVerb = "PUT"
+        TokenFilePath = $TokenFilePath
+    }
+    
+    # send the update
+    $UpdateResult = Send-CanvasUpdate @NewDataParams
+    return $UpdateResult
+}
+
+function Update-CanvasCourseStartDate {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$CourseId
+        
+        ,[Parameter(Mandatory=$true)]
+        [string]$StartDate
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # format the api url
+    $ApiUrl = "https://{0}/api/v1/courses/{1}" -f $global:CanvasSite,$CourseId
+    
+    # format date to ISO standard
+    $NewStartDate = Get-IsoDate -DateInputString $StartDate
+    
+    # structure the new data
+    $NewData = @{
+        course = @{
+            start_at = $NewStartDate
+        }
+    }
+
+    # format the data for upload
+    $NewDataBody = $NewData|ConvertTo-Json
+    
+    # configure upload parameters
+    $NewDataParams = @{
+        CanvasApiUrl = $ApiUrl
+        RequestBody = $NewDataBody
+        ApiVerb = "PUT"
+        TokenFilePath = $TokenFilePath
+    }
+    
+    # send the update
+    $UpdateResult = Send-CanvasUpdate @NewDataParams
+    return $UpdateResult
+}
+
+function Set-CanvasLoginPassword {
+    <#
+    .SYNOPSIS
+    update the password for an account login that uses canvas for authentication
+
+    .PARAMETER AccountId
+    Account identifier, use 1 or self for most users
+
+    .PARAMETER LoginId
+    Numerical id for the login (not the user); 
+    To get the logins for a user, run Get-CanvasUserLogins
+
+    .PARAMETER NewSecret
+    Plain text to use for the new password
+
+    .PARAMETER TokenFilePath
+    path to the secure string file containing the API user token
+    #>
+    [CmdletBinding()]
+    param (
+        # account identifier, use 1 or self for most users    
+        [Parameter(Mandatory=$true)]
+        [string]$AccountId
+        # 
+        ,[Parameter(Mandatory=$true)]
+        [string]$LoginId
+        
+        # plain text for the new password
+        ,[Parameter(Mandatory=$true)]
+        [string]$NewSecret
+        
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # format the api url
+    # /api/v1/accounts/:account_id/logins/:id
+    $ApiUrl = "https://{0}/api/v1/accounts/{1}/logins/{2}" -f $global:CanvasSite, $AccountId, $LoginId
+    # structure the new data
+    $NewData = @{
+        login = @{
+            password = $NewSecret
+        }
+    }
+
+    # format the data for upload
+    $NewDataBody = $NewData|ConvertTo-Json
+    
+    # configure upload parameters
+    $NewDataParams = @{
+        CanvasApiUrl = $ApiUrl
+        RequestBody = $NewDataBody
+        ApiVerb = "PUT"
+        TokenFilePath = $TokenFilePath
+    }
+    # send the update
+    $NewItemResult = Send-CanvasUpdateWithVars @NewDataParams
+    $ReturnMessage = "unhandled response status"
+    if ($NewItemResult.StatusCode.ToString() -eq "200"){
+        $ReturnMessage = "password updated for login id:{0} belonging to user id:{1}" -f $NewItemResult.result.id, $NewItemResult.result.user_id
+    } 
+    else {
+        $ReturnMessage = "unable ({1}) to update password: {0}" -f $NewItemResult.result.errors.message, $NewItemResult.StatusCode
+    }
+    return $ReturnMessage
 }
 
 <#
