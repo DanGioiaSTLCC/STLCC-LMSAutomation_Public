@@ -151,13 +151,12 @@ function Send-CanvasUpdate {
         [Parameter(Mandatory=$true)]
         [string]$TokenFilePath
     )
-    $TokenString = Get-CanvasTokenString $TokenFilePath
+    $TokenStringSecured = Get-CanvasTokenStringSecured -KeeperFile $TokenFilePath
     $RestParams = @{
         Method = $ApiVerb
         Uri = $CanvasApiUrl
-        Headers = @{
-            Authorization = "Bearer $TokenString"
-        }
+        Authentication = "Bearer"
+        Token = $TokenStringSecured
         ResponseHeadersVariable = "ResponseHeaders"
     }
     if ($RequestBody -ne ""){
@@ -170,8 +169,8 @@ function Send-CanvasUpdate {
         Exit 55
     }
     # clear token data
-    $TokenString = $null
-    Remove-Variable -Name "TokenString"
+    $TokenStringSecured = $null
+    Remove-Variable -Name "TokenStringSecured"
     return $result
 }
 
@@ -190,10 +189,11 @@ function Send-CanvasUpdateWithVars {
         [Parameter(Mandatory=$true)]
         [string]$TokenFilePath
     )
-    $TokenString = Get-CanvasTokenString $TokenFilePath
     $RestParams = @{
         Method = $ApiVerb
         Uri = $CanvasApiUrl
+        Authentication = "Bearer"
+        Token = Get-CanvasTokenStringSecured -KeeperFile $TokenFilePath
         Headers = @{
             Authorization = "Bearer $TokenString"
         }
@@ -223,6 +223,46 @@ function Send-CanvasUpdateWithVars {
     return $ReturnData
 }
 
+function Send-CanvasUpdateFormDataWithVars {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$CanvasApiUrl,
+
+        [Parameter(Mandatory=$true)]
+        $RequestBody, 
+
+        [Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    
+    $ReturnData = @{
+        result = "Error - No Data Provided"
+        StatusCode = "XxX"
+        Headers = ""
+    }
+    $RestParams = @{
+        Method = "POST"
+        Uri = $CanvasApiUrl
+        Form = $RequestBody
+        Authentication = "Bearer"
+        Token = Get-CanvasTokenStringSecured -KeeperFile $TokenFilePath
+        ResponseHeadersVariable = "ResponseHeaders"
+        StatusCodeVariable = "StatusCodeInfo"
+        SkipHttpErrorCheck = $true
+    }
+    $result = Invoke-RestMethod @RestParams
+    #$result = Invoke-WebRequest -Method POST -Uri $CanvasApiUrl -Headers @{Authorization=" Bearer $($TokenString)"} -Form $RequestBody
+    
+    $ReturnData = @{
+        result = $result
+        StatusCode = $StatusCodeInfo
+        Headers = $ResponseHeaders
+    }
+
+    return $ReturnData
+}
+
 function Get-CanvasItem {
     [CmdletBinding()]
     param (
@@ -232,8 +272,8 @@ function Get-CanvasItem {
         [Parameter(Mandatory=$true)]
         [string]$TokenFilePath
     )
-    $TokenString = Get-CanvasTokenString $TokenFilePath
-    $result = Invoke-RestMethod -Method GET -Headers @{"Authorization"="Bearer $TokenString"} -Uri $CanvasApiUrl -ResponseHeadersVariable ResponseHeaders
+    $TokenString = Get-CanvasTokenStringSecured -KeeperFile $TokenFilePath
+    $result = Invoke-RestMethod -Method GET -Authentication Bearer -Token $TokenString -Uri $CanvasApiUrl -ResponseHeadersVariable ResponseHeaders
     # clear token data
     $TokenString = $null
     Remove-Variable -Name "TokenString"    
@@ -249,8 +289,8 @@ function Get-CanvasItemWithVars {
         [Parameter(Mandatory=$true)]
         [string]$TokenFilePath
     )
-    $TokenString = Get-CanvasTokenString $TokenFilePath
-    $result = Invoke-RestMethod -Method GET -Headers @{"Authorization"="Bearer $TokenString"} -Uri $CanvasApiUrl -ResponseHeadersVariable ResponseHeaders -StatusCodeVariable StatusCodeInfo -SkipHttpErrorCheck
+    $TokenString = Get-CanvasTokenStringSecured -KeeperFile $TokenFilePath
+    $result = Invoke-RestMethod -Method GET -Authentication Bearer -Token $TokenString -Uri $CanvasApiUrl -ResponseHeadersVariable ResponseHeaders -StatusCodeVariable StatusCodeInfo -SkipHttpErrorCheck
     # clear token data
     $TokenString = $null
     Remove-Variable -Name "TokenString"    
@@ -302,9 +342,9 @@ function Get-CanvasItemList {
         }
     }
     Write-Verbose "original URL is $CanvasApiUrl"
-    $TokenString = Get-CanvasTokenString $TokenFilePath
+    $TokenString = Get-CanvasTokenStringSecured -KeeperFile $TokenFilePath
     # add follow rel link for the command to automatically follw the next result set link
-    $result = Invoke-RestMethod -Method GET -Headers @{"Authorization"="Bearer $TokenString"} -Uri $CanvasApiUrl -FollowRelLink -MaximumFollowRelLink $MaxPages
+    $result = Invoke-RestMethod -Method GET -Authentication Bearer -Token $TokenString -Uri $CanvasApiUrl -FollowRelLink -MaximumFollowRelLink $MaxPages
     # clear token data
     $TokenString = $null
     Remove-Variable -Name "TokenString"    
@@ -352,9 +392,9 @@ function Get-CanvasItemListWithVars {
     }
     Write-Verbose "original URL is $CanvasApiUrl"
 
-    $TokenString = Get-CanvasTokenString $TokenFilePath
+    $TokenString = Get-CanvasTokenStringSecured -KeeperFile $TokenFilePath
     # add follow rel link for the command to automatically follw the next result set link
-    $result = Invoke-RestMethod -Method GET -Headers @{"Authorization"="Bearer $TokenString"} -Uri $CanvasApiUrl -FollowRelLink -MaximumFollowRelLink $MaxPages -ResponseHeadersVariable ResponseHeaders -StatusCodeVariable StatusCodeInfo -SkipHttpErrorCheck
+    $result = Invoke-RestMethod -Method GET -Authentication Bearer -Token $TokenString -Uri $CanvasApiUrl -FollowRelLink -MaximumFollowRelLink $MaxPages -ResponseHeadersVariable ResponseHeaders -StatusCodeVariable StatusCodeInfo -SkipHttpErrorCheck
     # clear token data
     $TokenString = $null
     Remove-Variable -Name "TokenString"
@@ -415,7 +455,7 @@ function Send-CanvasSisFile {
         [Parameter(Mandatory = $false)]
         [string]$OtherArguments = ""
     )
-    $TokenString = Get-CanvasTokenString $TokenFilePath
+    $TokenString = Get-CanvasTokenStringSecured -KeeperFile $TokenFilePath
     # format the upload url
     [string]$UploadRoute = "https://{0}/api/v1/accounts/1/sis_imports.json" -f  $global:CanvasSite;
     $UploadRoute += "?import_type=instructure_csv"
@@ -429,7 +469,7 @@ function Send-CanvasSisFile {
     if ($OverrideStickiness){$UploadRoute += "&override_sis_stickiness=true&add_sis_stickiness=true"}
     Write-Verbose $UploadRoute
     # send the results to canvas
-    $UploadResult = Invoke-restmethod -Method POST -Headers @{"Authorization"="Bearer $TokenString"} -Uri $UploadRoute -InFile $UploadFilePath -ContentType "text/csv"
+    $UploadResult = Invoke-restmethod -Method POST -Authentication Bearer -Token $TokenString -Uri $UploadRoute -InFile $UploadFilePath -ContentType "text/csv"
     
     # clear out the token var
     $TokenString = $null;
@@ -465,14 +505,14 @@ function Send-CanvasOutcomeFile {
         [string]$TokenFilePath
         
     )
-    $TokenString = Get-CanvasTokenString $TokenFilePath
+    $TokenString = Get-CanvasTokenStringSecured -KeeperFile $TokenFilePath
     # format the upload url
     [string]$UploadRoute = "https://{0}/api/v1/accounts/1/outcome_imports" -f  $global:CanvasSite;
     $UploadRoute += "?import_type=instructure_csv"
     
     Write-Verbose $UploadRoute
     # send the file to canvas
-    $UploadResult = Invoke-restmethod -Method POST -Headers @{"Authorization"="Bearer $TokenString"} -Uri $UploadRoute -InFile $UploadFilePath -ContentType "text/csv"
+    $UploadResult = Invoke-restmethod -Method POST -Authentication Bearer -Token $TokenString -Uri $UploadRoute -InFile $UploadFilePath -ContentType "text/csv"
     
     # clear out the token var
     $TokenString = $null;
@@ -525,8 +565,20 @@ function Get-CanvasTokenString {
     # read the content of the file
     $UserPwSecured = Get-Content $KeeperFile | ConvertTo-SecureString
     $UserPwPlainText = ConvertFrom-SecureString -SecureString $UserPwSecured -AsPlainText
-    # send the data back
+    # send the text back
     return $UserPwPlainText
+}
+
+function Get-CanvasTokenStringSecured {
+	[CmdletBinding()]
+    param (
+        [Parameter()]
+        [string]$KeeperFile
+    )
+    # read the content of the file
+    $UserPwSecured = Get-Content $KeeperFile | ConvertTo-SecureString
+    # send the data back as a secure string
+    return $UserPwSecured
 }
 
 function Get-CanvasUserInfo {
@@ -3437,6 +3489,111 @@ function Set-CanvasLoginPassword {
         $ReturnMessage = "unable ({1}) to update password: {0}" -f $NewItemResult.result.errors.message, $NewItemResult.StatusCode
     }
     return $ReturnMessage
+}
+
+function Update-CanvasCourseSectionEndDate {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        [string]$SectionId
+        
+        ,[Parameter(Mandatory)]
+        [string]$EndDate
+        
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # format the api url
+    $ApiUrl = "https://{0}/api/v1/sections/{1}" -f $global:CanvasSite, $SectionId
+    
+    # structure the new data
+    $NewDate = Get-IsoDate $EndDate
+    $NewData = @{
+        course_section = @{
+            end_at = $NewDate.ToString()
+        }
+    }
+
+    # format the data for upload
+    $NewDataBody = $NewData|ConvertTo-Json
+    
+    # configure upload parameters
+    $NewDataParams = @{
+        CanvasApiUrl = $ApiUrl
+        RequestBody = $NewDataBody
+        ApiVerb = "PUT"
+        TokenFilePath = $TokenFilePath
+    }
+    # send the update
+    $NewItemResult = Send-CanvasUpdate @NewDataParams
+    return $NewItemResult
+}
+function Update-CanvasCourseSectionStartDate {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        [string]$SectionId
+        
+        ,[Parameter(Mandatory)]
+        [string]$EndDate
+        
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # format the api url
+    $ApiUrl = "https://{0}/api/v1/sections/{1}" -f $global:CanvasSite, $SectionId
+    
+    # structure the new data
+    $NewDate = Get-IsoDate $EndDate
+    $NewData = @{
+        course_section = @{
+            start_at = $NewDate.ToString()
+        }
+    }
+
+    # format the data for upload
+    $NewDataBody = $NewData|ConvertTo-Json
+    
+    # configure upload parameters
+    $NewDataParams = @{
+        CanvasApiUrl = $ApiUrl
+        RequestBody = $NewDataBody
+        ApiVerb = "PUT"
+        TokenFilePath = $TokenFilePath
+    }
+    # send the update
+    $NewItemResult = Send-CanvasUpdate @NewDataParams
+    return $NewItemResult
+}
+
+function Get-CanvasQuiz {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        [string]$CourseId
+        
+        ,[Parameter(Mandatory)]
+        [string]$QuizId
+
+        ,[Parameter(Mandatory=$false)]
+        [switch]$QuizEngineClassic
+        
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # format the api url
+    # classic: /api/v1/courses/:course_id/quizzes/:id
+    # new qzs: /api/quiz/v1/courses/:course_id/quizzes/:assignment_id
+    $ApiUrl = "https://{0}/api/quiz/v1/courses/{1}/quizzes/{2}" -f $global:CanvasSite, $CourseId, $QuizId
+    if ($QuizEngineClassic){
+        $ApiUrl = "https://{0}/api/v1/courses/{1}/quizzes/{2}" -f $global:CanvasSite, $CourseId, $QuizId
+    }
+    # send the call
+    $QuizInfo = Get-CanvasItemWithVars -CanvasApiUrl $ApiUrl -TokenFilePath $TokenFilePath
+    return $QuizInfo.result
 }
 
 <#
