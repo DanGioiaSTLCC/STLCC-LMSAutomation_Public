@@ -125,6 +125,17 @@ function Get-IsoDate {
 }
 Set-Alias -Name ConvertTo-IsoDate -Value Get-IsoDate
 
+function Get-IsoDateFormat {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$DateInputString
+    )
+    $DateString = Get-Date $DateInputString -Format u
+    return $DateString.ToString()
+}
+Set-Alias -Name ConvertTo-IsoDateFormat -Value Get-IsoDateFormat
+
 function Get-LocalDate {
     [CmdletBinding()]
     param (
@@ -151,6 +162,7 @@ function Send-CanvasUpdate {
         [Parameter(Mandatory=$true)]
         [string]$TokenFilePath
     )
+    # $TokenString = Get-CanvasTokenString $TokenFilePath
     $TokenStringSecured = Get-CanvasTokenStringSecured -KeeperFile $TokenFilePath
     $RestParams = @{
         Method = $ApiVerb
@@ -786,12 +798,13 @@ function Get-CanvasCourse {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true)]
-        [string]$CanvasCourse,
+        [Alias("CanvasCourse")]
+        [string]$CourseId,
 
         [Parameter(Mandatory=$true)]
         [string]$TokenFilePath
     )
-    $CourseUrl = "https://{0}/api/v1/courses/{1}" -f $global:CanvasSite,$CanvasCourse
+    $CourseUrl = "https://{0}/api/v1/courses/{1}" -f $global:CanvasSite,$CourseId
     $CourseData = Get-CanvasItem -CanvasApiUrl $CourseUrl -TokenFilePath $TokenFilePath
     return $CourseData
 }
@@ -800,6 +813,7 @@ function Get-CanvasCourseByCRN {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true)]
+        [Alias("CourseId")]
         [string]$CanvasCrn,
 
         [Parameter(Mandatory=$true)]
@@ -814,12 +828,13 @@ function Get-CanvasCourseSections {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true)]
-        [string]$CanvasCourse,
+        [Alias("CanvasCourse")]
+        [string]$CourseId,
 
         [Parameter(Mandatory=$true)]
         [string]$TokenFilePath
     )
-    $CourseUrl = "https://{0}/api/v1/courses/{1}/sections" -f $global:CanvasSite,$CanvasCourse
+    $CourseUrl = "https://{0}/api/v1/courses/{1}/sections" -f $global:CanvasSite,$CourseId
     $CourseData = Get-CanvasItemList -CanvasApiUrl $CourseUrl -PerPage 100 -TokenFilePath $TokenFilePath
     return $CourseData    
 }
@@ -910,7 +925,8 @@ function New-CanvasMembership {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true)]
-        [string]$CanvasCourse,
+        [Alias("CanvasCourse")]
+        [string]$CourseId,
 
         [Parameter(Mandatory=$true)]
         [string]$CanvasUser,
@@ -931,7 +947,7 @@ function New-CanvasMembership {
         [string]$NewStatus="active"
     )
     # build the route
-    $EnrollmentUrl = "https://{0}/api/v1/courses/{1}/enrollments" -f $global:CanvasSite,$CanvasCourse
+    $EnrollmentUrl = "https://{0}/api/v1/courses/{1}/enrollments" -f $global:CanvasSite,$CourseId
     
     # get list of acceptable course roles
     if ($global:CourseRoleIds.count -eq 0){
@@ -989,7 +1005,8 @@ function Get-CanvasCourseMemberships {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true)]
-        [string]$CanvasCourse,
+        [Alias("CanvasCourse")]
+        [string]$CourseId,
        
         [Parameter(Mandatory=$true)]
         [string]$TokenFilePath,
@@ -998,7 +1015,7 @@ function Get-CanvasCourseMemberships {
         [int32]$MaxResults = 150
     )
     # build the URL
-    $CourseUsersUrl = "https://{0}/api/v1/courses/{1}/enrollments" -f $global:CanvasSite,$CanvasCourse
+    $CourseUsersUrl = "https://{0}/api/v1/courses/{1}/enrollments" -f $global:CanvasSite,$CourseId
     # construct the parameters
     $MembershipListParams = @{
         CanvasApiUrl = $CourseUsersUrl
@@ -1055,6 +1072,7 @@ function Set-CanvasCourseMembershipStatus {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true)]
+        [Alias("CourseId")]
         [string]$CanvasCourse,
 
         [Parameter(Mandatory=$true)]
@@ -1141,7 +1159,22 @@ function New-CanvasCourseCopy {
         [bool]$SkipSettings=$false,
 
         [Parameter(Mandatory=$true)]
-        [string]$TokenFilePath
+        [string]$TokenFilePath,
+
+        [Parameter(Mandatory=$false)]
+        [bool]$ShiftDates=$false,
+
+        [Parameter(Mandatory=$false)]
+        [string]$OldStart="",
+
+        [Parameter(Mandatory=$false)]
+        [string]$OldEnd="",
+
+        [Parameter(Mandatory=$false)]
+        [string]$NewStart="",
+
+        [Parameter(Mandatory=$false)]
+        [string]$NewEnd=""
     )
     $MigrationUrl = "https://{0}/api/v1/courses/{1}/content_migrations" -f $global:CanvasSite,$CourseDestination
     $MigrationSettings = @{
@@ -1153,6 +1186,16 @@ function New-CanvasCourseCopy {
     $MigrationObject = @{
         migration_type = "course_copy_importer"
         settings = $MigrationSettings
+    }
+    if ($ShiftDates -and ($OldStart -ne "") -and ($NewStart -ne "") -and ($OldEnd -ne "") -and ($NewEnd -ne "")){
+        $DateShiftOptions = @{
+            shift_dates     = $ShiftDates
+            old_start_date  = $OldStart
+            old_end_date    = $OldEnd
+            new_start_date  = $NewStart
+            new_end_date    = $NewEnd
+        }
+        $MigrationObject.Add("date_shift_options",$DateShiftOptions)
     }
     $MigrationBody = ConvertTo-Json $MigrationObject
     $MigrationTask = Send-CanvasUpdate -RequestBody $MigrationBody -CanvasApiUrl $MigrationUrl -TokenFilePath $TokenFilePath
@@ -1529,7 +1572,8 @@ function Get-CanvasCoursePages {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true)]
-        [string]$CanvasCourse,
+        [Alias("CanvasCourse")]
+        [string]$CourseId,
 
         [Parameter(Mandatory=$true)]
         [string]$TokenFilePath,
@@ -1571,7 +1615,7 @@ function Get-CanvasCoursePages {
         $SearchOptions += "&published=$Published"
     }
     # build the URL
-    $CoursePagessUrl = "https://{0}/api/v1/courses/{1}/pages{2}{3}" -f $global:CanvasSite,$CanvasCourse,$SearchOptions,$ResultPageSize
+    $CoursePagessUrl = "https://{0}/api/v1/courses/{1}/pages{2}{3}" -f $global:CanvasSite,$CourseId,$SearchOptions,$ResultPageSize
     # construct the parameters
     $PageListParams = @{
         "CanvasApiUrl" = $CoursePagessUrl
@@ -1593,6 +1637,7 @@ function Get-CanvasCourseModules {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true)]
+        [Alias("CourseId")]
         [string]$CanvasCourse,
 
         [Parameter(Mandatory=$true)]
@@ -1633,7 +1678,8 @@ function Get-CanvasCourseFiles {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true)]
-        [string]$CanvasCourse,
+        [Alias("CanvasCourse")]
+        [string]$CourseId,
 
         [Parameter(Mandatory=$true)]
         [string]$TokenFilePath,
@@ -1649,7 +1695,7 @@ function Get-CanvasCourseFiles {
         $SearchOptions += "?search_term=$SearchTerm"
     }    
     # build the URL
-    $CourseFilesUrl = "https://{0}/api/v1/courses/{1}/files" -f $global:CanvasSite,$CanvasCourse
+    $CourseFilesUrl = "https://{0}/api/v1/courses/{1}/files" -f $global:CanvasSite,$CourseId
     # construct the parameters
     $FileListParams = @{
         "CanvasApiUrl" = $CourseFilesUrl
@@ -1671,7 +1717,8 @@ function Get-CanvasCourseTabs {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true)]
-        [string]$CanvasCourse,
+        [Alias("CanvasCourse")]
+        [string]$CourseId,
 
         [Parameter(Mandatory=$true)]
         [string]$TokenFilePath
@@ -1679,7 +1726,7 @@ function Get-CanvasCourseTabs {
     )
     #GET /api/v1/courses/:course_id/tabs
     # build the URL
-    $CourseTabsUrl = "https://{0}/api/v1/courses/{1}/tabs" -f $global:CanvasSite,$CanvasCourse
+    $CourseTabsUrl = "https://{0}/api/v1/courses/{1}/tabs" -f $global:CanvasSite,$CourseId
     # construct the parameters
     $ListParams = @{
         CanvasApiUrl = $CourseTabsUrl
@@ -1987,7 +2034,7 @@ function Get-CanvasReportStatus {
     account identifer against which the report is being run
     .Parameter TokenFilePath
     path to the secure string file containing the encrypted Canvas user token
-        #>
+    #>
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true)]
@@ -2138,7 +2185,7 @@ function Invoke-CanvasSisMonitor {
 function Invoke-CanvasReportMonitor {
     <#
     .SYNOPSIS
-    Canvas SIS Monitor - Recursive
+    Canvas report monitor - recursive
     #>
     [CmdletBinding()]
     param (
@@ -2887,7 +2934,8 @@ function Update-CanvasPageContents {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true)]
-        [string]$CanvasCourse
+        [Alias("CanvasCourse")]
+        [string]$CourseId
         
         ,[Parameter(Mandatory=$true)]
         [string]$PageUrlOrId
@@ -2901,7 +2949,7 @@ function Update-CanvasPageContents {
     )
     # format the api url
     #PUT /api/v1/courses/:course_id/pages/:url_or_id
-    $ApiUrl = "https://{0}/api/v1/courses/{1}/pages/{2}" -f $global:CanvasSite, $CanvasCourse, $PageUrlOrId
+    $ApiUrl = "https://{0}/api/v1/courses/{1}/pages/{2}" -f $global:CanvasSite, $CourseId, $PageUrlOrId
     # structure the new data
     $NewData = @{
         wiki_page = @{
@@ -3594,6 +3642,126 @@ function Get-CanvasQuiz {
     # send the call
     $QuizInfo = Get-CanvasItemWithVars -CanvasApiUrl $ApiUrl -TokenFilePath $TokenFilePath
     return $QuizInfo.result
+}
+
+function Set-CanvasCourseHome {
+    <#
+    .SYNOPSIS
+    Configure the first item to display when accessing the course's default URL
+
+    .PARAMETER CourseId
+    Canvas course identifier. To use the CRN, use the standard prefix sis_course_id:Full_CRN
+
+    .PARAMETER HomeOption
+    Available home options are "feed","wiki","modules","syllabus","assignments"
+
+    .PARAMETER TokenFilePath
+    path to the secure string file containing the API user token
+
+    #>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        [string]$CourseId
+        
+        # available home options are "feed","wiki","modules","syllabus","assignments"
+        ,[Parameter(Mandatory)]
+        [string]$HomeOption
+        
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # format the api url
+    $ApiUrl = "https://{0}/api/v1/courses/{1}" -f $global:CanvasSite, $CourseId
+    
+    # structure the new data
+    $HomeOption = $HomeOption.ToLower()
+    switch ($HomeOption){
+        {@("wiki","page","homepage","startpage") -contains $_} {
+            $HomeOption = "wiki"
+        }
+        "modules" {
+            $HomeOption = "modules"
+        }
+        "syllabus" {
+            $HomeOption = "syllabus"
+        }
+        {@("assignments","homework") -contains $_} {
+            $HomeOption = "assignments"
+        }
+        Default {$HomeOption = "modules"}
+    }
+    $NewData = @{
+        course = @{
+            default_view = $HomeOption
+        }
+    }
+
+    # format the data for upload
+    $NewDataBody = $NewData|ConvertTo-Json
+    
+    # configure upload parameters
+    $NewDataParams = @{
+        CanvasApiUrl = $ApiUrl
+        RequestBody = $NewDataBody
+        ApiVerb = "PUT"
+        TokenFilePath = $TokenFilePath
+    }
+    # send the update
+    $NewItemResult = Send-CanvasUpdate @NewDataParams
+    return $NewItemResult
+}
+
+function Set-CanvasCourseFrontpage {
+    <#
+    .SYNOPSIS
+    Set the URL for the landing page of the course
+
+    .PARAMETER CourseId
+    Canvas course identifier. To use the CRN, use the standard prefix sis_course_id:Full_CRN
+    
+    .PARAMETER PageUrl
+    Relative pages URL for example, 'welcome-to-this-course'. This URL can be found in the page property, url.
+
+    .PARAMETER TokenFilePath
+    path of the file containing the token text stored as a secure string
+    #>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        [string]$CourseId
+        
+        # relative pages URL for example, 'welcome-to-this-course'. This URL can be found in the page property, url.
+        ,[Parameter(Mandatory)]
+        [string]$PageUrl
+        
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # format the api url
+    $ApiUrl = "https://{0}/api/v1/courses/{1}/pages/{2}" -f $global:CanvasSite, $CourseId, $PageUrl
+    # structure the new data
+    $NewData = @{
+        wiki_page = @{
+            front_page = $true
+        }
+    }
+
+    # format the data for upload
+    $NewDataBody = $NewData|ConvertTo-Json
+    
+    # configure upload parameters
+    $NewDataParams = @{
+        CanvasApiUrl = $ApiUrl
+        RequestBody = $NewDataBody
+        ApiVerb = "PUT"
+        TokenFilePath = $TokenFilePath
+    }
+    # send the update
+    $NewItemResult = Send-CanvasUpdate @NewDataParams
+    return $NewItemResult
 }
 
 <#
