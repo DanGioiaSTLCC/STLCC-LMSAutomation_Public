@@ -8,15 +8,7 @@ Set VerbosePreference equal to Continue to read details of operations
 .DESCRIPTION
 Canvas tokens can be retrieved by running Get-CanvasTokenString
 Canvas token files can be created by running New-CanvasTokenFile
-Generic GET requests can be made by using a fully formed API route in Get-CanvasItem
-
-ID Substitutions:
-Copied and pasted from https://canvas.instructure.com/doc/api/file.object_ids.html
-
-Throughout the API, objects are referenced by internal IDs. You can also reference objects by SIS ID, by 
-prepending the SIS ID with the name of the SIS field, like sis_course_id:. For instance, to retrieve the 
-list of assignments for a course with SIS ID of A1234:
-    /api/v1/courses/sis_course_id:A1234/assignments
+Generic GET requests can be made by using a fully formed API route in Get-CanvasItem or Get-CanvasItemList
 
 The following objects support SIS IDs in the API:
 sis_account_id
@@ -33,9 +25,11 @@ sis_user_id
 Add-Type -AssemblyName System.Web
 # not sure if PowerShell or Windows issue but not setting TLS can cause issues randomly by using default so always set it
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls13
-$global:CanvasSite = "school.beta.instructure.com"
+$global:CanvasSite = "institution.beta.instructure.com"
 $global:LorSite = "lor.instructure.com"
 $global:CourseRoleIds = @()
+$global:DirectoryDomain = "domain.tld"
+$global:DirectoryUserPath = "OU=User Org Unit,DC=domain,DC=tld"
 function Get-UrlEncodedString {
     [CmdletBinding()]
     param (
@@ -840,6 +834,16 @@ function Get-CanvasCourseSections {
 }
 
 function New-CanvasCourse {
+    <#
+    .SYNOPSIS
+    create a course in Canvas
+
+    .PARAMETER TermId
+    SIS Id for the term
+
+    .PARAMETER CourseAccount
+    SIS Id for the account, defaults to self
+    #>
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true)]
@@ -2486,6 +2490,13 @@ function New-CanvasCourseSection {
 }
 
 function Get-CollegeEmailAddressFromAD {
+    <#
+    .SYNOPSIS
+    retrieve a user's email address by searching Active directory. Requires the RSAT Active Directory PowerShell tools
+
+    .PARAMETER CollegeUsername
+    username to lookup in AD
+    #>
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true)]
@@ -2501,6 +2512,64 @@ function Get-CollegeEmailAddressFromAD {
         #log error conditions 
     }
     return $EmamilSearchResult
+}
+
+function Get-CollegeEmailAddressFromLdap {
+    <#
+    .SYNOPSIS
+    retrieve a user's email address by searching Active directory via LDAP.
+
+    .PARAMETER CollegeUsername
+    username to lookup
+    #>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$CollegeUsername
+    )
+    $EmamilSearchResult = "not found"
+    try {
+        $DsSearchResult = Get-CollegeUserInfoFromLDAP -CollegeUsername $CollegeUsername
+        if (($null -ne $DsSearchResult) -and ($null -ne $DsSearchResult.mail) -and ($ADSearchResult.mail -ne "")){
+            $EmamilSearchResult = $DsSearchResult.mail.ToLower()
+        }
+    } catch { 
+        #log error conditions 
+    }
+    return $EmamilSearchResult
+}
+
+function Get-CollegeUserInfoFromLDAP {
+    <#
+    .SYNOPSIS
+    retrieve email address using LDAP to query the identity directory
+
+    .PARAMETER CollegeUsername
+    username to lookup in AD
+
+    .PARAMETER DsDomain
+    domain for the directory
+
+    .PARAMETER DsLdapPath
+    LDAP organization unit path for the directory tree to search
+    #>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        [string]$CollegeUsername,
+
+        [Parameter(Mandatory=$false)]
+        [string]$DsDomain="$($global:DirectoryDomain)",
+
+        [Parameter(Mandatory=$false)]
+        [string]$DsLdapPath="$($global:DirectoryUserPath)"
+    )
+    $DSEntry = New-Object System.DirectoryServices.DirectoryEntry("LDAP://$($DsDomain)/$($DsLdapPath)")
+    $DSSearcher = New-Object System.DirectoryServices.DirectorySearcher($DSEntry)
+    $DSSearcher.PropertiesToLoad.AddRange(@("samAccountName","displayName","givenName","sn","title","userprincipalname","mail"))
+    $DSSearcher.Filter = "(&(objectClass=user)(samaccountname=$($CollegeUsername)))"
+    $SearchResult = $DSSearcher.FindOne()
+    return $SearchResult.Properties
 }
 
 function Set-CanvasCourseFormat {
@@ -3764,6 +3833,202 @@ function Set-CanvasCourseFrontpage {
     return $NewItemResult
 }
 
+function Get-CanvasCourseAssignment {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        [string]$CourseId
+        
+        ,[Parameter(Mandatory)]
+        [string]$AssignmentId
+        
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # format the api url
+    $ApiUrl = "https://{0}/api/v1/courses/{1}/assignments/{2}" -f $global:CanvasSite, $CourseId, $AssignmentId
+
+    # configure request parameters
+    $DataParams = @{
+        CanvasApiUrl = $ApiUrl
+        TokenFilePath = $TokenFilePath
+    }
+    # send the request
+    $ItemResult = Get-CanvasItem @DataParams
+    return $ItemResult
+}
+
+function Get-CanvasCourseAssignments {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        [string]$CourseId
+        
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory)]
+        [string]$TokenFilePath
+    )
+    # format the api url
+    $ApiUrl = "https://{0}/api/v1/courses/{1}/assignments" -f $global:CanvasSite, $CourseId
+    # structure the new data
+    
+    # configure request parameters
+    $DataParams = @{
+        CanvasApiUrl = $ApiUrl
+        TokenFilePath = $TokenFilePath
+        PerPage = 99
+    }
+    # send the request
+    $ItemListResult = Get-CanvasItemList @DataParams
+    return $ItemListResult
+}
+
+function Remove-CanvasCourseAssignment {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        [string]$CourseId
+        
+        ,[Parameter(Mandatory)]
+        [string]$AssignmentId
+        
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # format the api url
+    $ApiUrl = "https://{0}/api/v1/courses/{1}/assignments/{2}" -f $global:CanvasSite, $CourseId, $AssignmentId
+    
+    # configure delete parameters
+    $DataParams = @{
+        CanvasApiUrl = $ApiUrl
+        ApiVerb = "DELETE"
+        TokenFilePath = $TokenFilePath
+    }
+    # send the update
+    $ItemResult = Send-CanvasUpdate @DataParams
+    return $ItemResult
+}
+
+function Remove-CanvasCourseAssignments {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        [string]$CourseId
+        
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory)]
+        [string]$TokenFilePath
+    )
+    # Retrieve list of assignments to delet
+    $AssignmentsToDelete = Get-CanvasCourseAssignments -CourseId $CourseId -TokenFilePath $TokenFilePath
+    # remove each assignment in list
+    foreach ($Assignment in $AssignmentsToDelete){
+        $AssgnId = $Assignment.id.ToString()
+        $RemParams = @{
+            CourseId = $CourseId
+            AssignmentId = $AssgnId
+            TokenFilePath = $TokenFilePath
+        }
+        $DelResult = Remove-CanvasCourseAssignment @RemParams
+        Write-Host "Assignment $($AssgnId) in Course $($CourseId) is now $($DelResult.workflow_state)"
+    }
+    return "Finished removing assignments from $($CourseId)"
+}
+
+function Remove-CanvasCourseDiscussionTopic {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        [string]$CourseId
+        
+        ,[Parameter(Mandatory)]
+        [string]$TopicId
+        
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory)]
+        [string]$TokenFilePath
+    )
+    # format the api url
+    $ApiUrl = "https://{0}/api/v1/courses/{1}/discussion_topics/{2}" -f $global:CanvasSite, $CourseId, $TopicId
+    
+    # configure Deletion parameters
+    $DataParams = @{
+        CanvasApiUrl = $ApiUrl
+        ApiVerb = "DELETE"
+        TokenFilePath = $TokenFilePath
+    }
+    # send the update
+    $ItemResult = Send-CanvasUpdate @DataParams
+    return $ItemResult
+}
+function Remove-CanvasCourseAnnouncements {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        [string]$CourseId
+
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory)]
+        [string]$TokenFilePath
+    )
+    # Enumerate announcement topics
+    $AnnouncementList = Get-CanvasCourseAnnouncements -CourseId $CourseId -TokenFilePath $TokenFilePath
+    # Iterate through anc list
+    foreach ($AnnouncementTopic in $AnnouncementList.result){
+        $AncId = $AnnouncementTopic.id.ToString()
+        $DelResult = Remove-CanvasCourseDiscussionTopic -CourseId $CourseId -TopicId $AncId -TokenFilePath $TokenFilePath
+        Write-Host "Topic $($AncId) in $($CourseId) now $($DelResult.workflow_state)|$($DelResult.title)"
+    }
+    
+    # format the api url
+    $ApiUrl = "https://{0}/api/v1/endpoint/{1}" -f $global:CanvasSite,$ItemId
+    # structure the new data
+    
+    # configure upload parameters
+    $NewDataParams = @{
+        CanvasApiUrl = $ApiUrl
+        RequestBody = $NewDataBody
+        ApiVerb = "POST"
+        TokenFilePath = $TokenFilePath
+    }
+    # send the update
+    $NewItemResult = Send-CanvasUpdate @NewDataParams
+    return $NewItemResult
+}
+
+function Get-CanvasDeveloperKeys {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$false)]
+        [string]$AccountId="self"
+
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory)]
+        [string]$TokenFilePath
+    )
+    # format the api url
+    $ApiUrl = "https://{0}/api/v1/accounts/{1}/developer_keys" -f $global:CanvasSite, $AccountId
+    $DevKeys = Get-CanvasItemList -CanvasApiUrl $ApiUrl -TokenFilePath $tknPath -PerPage 100
+    return $DevKeys
+}
+
+function Get-CanvasLtis {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$false)]
+        [string]$AccountId="self"
+
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory)]
+        [string]$TokenFilePath
+    )
+    # format the api url
+    $ApiUrl = "https://{0}/api/v1/accounts/{1}/external_tools" -f $global:CanvasSite, $AccountId
+    $DevKeys = Get-CanvasItemList -CanvasApiUrl $ApiUrl -TokenFilePath $tknPath -PerPage 100
+    return $DevKeys
+}
 <#
 function new-genericfunction {
     [CmdletBinding()]
@@ -3778,7 +4043,7 @@ function new-genericfunction {
         [string]$TokenFilePath
     )
     # format the api url
-    $ApiUrl = "https://{0}/api/v1/endpoint/{1}" -f $global:CanvasSite,$ItemId
+    $ApiUrl = "https://{0}/api/v1/endpoint/{1}" -f $global:CanvasSite, $ItemId
     # structure the new data
     $NewData = @{
         toplevel = @{
