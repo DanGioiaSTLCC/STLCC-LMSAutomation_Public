@@ -91,7 +91,7 @@ function Get-CanvasSisSshaPasswordText {
     return $SisPw
 }
 
-function Get-NewPasswordText {
+function New-PasswordText {
 	Param ([uint16]$intPasswordLength)
 	# init return string
 	$PasswordText = ""
@@ -106,9 +106,13 @@ function Get-NewPasswordText {
 	}
 	return $PasswordText
 }
-Set-Alias -Name New-PasswordText -Value Get-NewPasswordText
+Set-Alias -Name Get-NewPasswordText -Value New-PasswordText
 
-function Get-IsoDate {
+function ConvertTo-IsoDate {
+    <#
+    .SYNOPSIS
+    converts time to UTC then formats to ISO 8601 YYYY-MM-DDTHH:MM:SSZ
+    #>
     [CmdletBinding()]
     param (
         [Parameter(Mandatory = $true)]
@@ -117,9 +121,14 @@ function Get-IsoDate {
     $DateString = Get-Date $DateInputString -AsUTC -Format u
     return $DateString.ToString()
 }
-Set-Alias -Name ConvertTo-IsoDate -Value Get-IsoDate
+Set-Alias -Name Get-IsoDate -Value ConvertTo-IsoDate
 
 function Get-IsoDateFormat {
+    <#
+    .SYNOPSIS
+    converts date to ISO 8601 format YYYY-MM-DDTHH:MM:SSZ 
+    does not shift time to UTC - just formats
+    #>
     [CmdletBinding()]
     param (
         [Parameter(Mandatory = $true)]
@@ -131,6 +140,10 @@ function Get-IsoDateFormat {
 Set-Alias -Name ConvertTo-IsoDateFormat -Value Get-IsoDateFormat
 
 function Get-LocalDate {
+    <#
+    .SYNOPSIS
+    converts date-time to culture format and timezone where executed. 
+    #>
     [CmdletBinding()]
     param (
         [Parameter(Mandatory = $true)]
@@ -156,7 +169,6 @@ function Send-CanvasUpdate {
         [Parameter(Mandatory=$true)]
         [string]$TokenFilePath
     )
-    # $TokenString = Get-CanvasTokenString $TokenFilePath
     $TokenStringSecured = Get-CanvasTokenStringSecured -KeeperFile $TokenFilePath
     $RestParams = @{
         Method = $ApiVerb
@@ -410,6 +422,33 @@ function Get-CanvasItemListWithVars {
         Headers = $ResponseHeaders
     }
     return $ReturnData
+}
+
+function Get-CanvasItemListFlattened {
+    param (
+        [string]$ApiUrl,  # Base URL of the Canvas instance (e.g., https://yourinstitution.instructure.com/api/v1)
+        [string]$AccessToken  # Canvas API access token
+    )
+
+    $endpoint = "$ApiUrl"
+    $allPages = @()
+
+    do {
+        $response = Invoke-RestMethod -Uri $ApiUrl -Authentication Bearer -Token $AccessToken -Method Get -ResponseHeadersVariable headersr
+        
+        # Append retrieved pages to the result list
+        $allPages += $response
+        
+        # Check for pagination link in response headers
+        $linkHeader = $headersr.Link
+        $nextLink = if ($linkHeader -match '<(.*?)>; rel="next",<') { $matches[0] } else { $null }
+        write-host  "$linkHeader"
+        write-host $headersr
+        write-host $linkHeader
+        $endpoint = $nextLink
+    } while ($endpoint)
+
+    return $allPages
 }
 
 function Send-CanvasSisFile {
