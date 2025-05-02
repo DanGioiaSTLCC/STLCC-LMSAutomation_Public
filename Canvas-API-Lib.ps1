@@ -22,137 +22,19 @@ sis_term_id
 sis_user_id
 #>
 
+# include the general functions, specifically for date stuff and string hashing
+. $PSScriptRoot\Automation-General.ps1
+
 Add-Type -AssemblyName System.Web
 # not sure if PowerShell or Windows issue but not setting TLS can cause issues randomly by using default so always set it
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls13
+
+# setup global stuff
 $global:CanvasSite = "institution.beta.instructure.com"
 $global:LorSite = "lor.instructure.com"
 $global:CourseRoleIds = @()
 $global:DirectoryDomain = "domain.tld"
 $global:DirectoryUserPath = "OU=User Org Unit,DC=domain,DC=tld"
-function Get-UrlEncodedString {
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory=$true)]
-        [string]$StringText
-    )
-    $UrlText = [System.Web.HttpUtility]::UrlEncode($StringText).Replace(".", "%2E").Replace("/","%2F")
-    return $UrlText
-}
-
-function Get-StringHash {
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory = $true)]
-        [string]$StringToHash,
-        
-        [Parameter(Mandatory = $false)]
-        [string]$HashAlgorithm = "MD5"
-    )
-    
-    $HashResult = [PSCustomObject]@{
-        Hash = ""
-    }
-    $stringAsStream = [System.IO.MemoryStream]::new()
-    $writer = [System.IO.StreamWriter]::new($stringAsStream)
-    $writer.write($StringToHash)
-    $writer.Flush()
-    $stringAsStream.Position = 0
-    $HashResult = Get-FileHash -InputStream $stringAsStream -Algorithm "$HashAlgorithm" | Select-Object Hash
-    return $HashResult.Hash
-}
-
-function Get-Base64String {
-    [CmdletBinding()]
-    param (
-        [Parameter()]
-        [string]$InputString
-    )
-    $EncodedText =[Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($InputString))
-    return $EncodedText
-}
-
-function Get-CanvasSisSshaPasswordText {
-    <#
-    .SYNOPSIS
-    creaet a hashed value to include in an SIS user file to upload
-    see https://canvas.instructure.com/doc/api/file.sis_csv.html
-    one can use Get-NewPasswordText to generate a salt value
-    #>
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory=$true)]
-        [string]$PassPlainText
-
-        ,[Parameter(Mandatory=$true)]
-        [string]$PassTheSalt
-    )
-    $SisPw = "{SSHA}" + (Get-Base64String -InputString ("{0}{1}" -f (Get-StringHash -StringToHash ("{0}{1}" -f $PassPlainText,$PassTheSalt) -HashAlgorithm SHA1).ToLower(),$PassTheSalt))
-    return $SisPw
-}
-
-function New-PasswordText {
-	Param ([uint16]$intPasswordLength)
-	# init return string
-	$PasswordText = ""
-
-	for ($i=0;$i -lt $intPasswordLength;$i++){
-		# mixed case      capital    lower       integer
-		$PasswordRange = (65..90) + (97..122) + (48..57)
-		# select random number from the range(s)
-		[uint16]$PasswordPath = Get-Random -InputObject $PasswordRange
-		# add the random character to the return string
-		[string]$PasswordText += [char]($PasswordPath)
-	}
-	return $PasswordText
-}
-Set-Alias -Name Get-NewPasswordText -Value New-PasswordText
-
-function ConvertTo-IsoDate {
-    <#
-    .SYNOPSIS
-    converts time to UTC then formats to ISO 8601 YYYY-MM-DDTHH:MM:SSZ
-    #>
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory = $true)]
-        [string]$DateInputString
-    )
-    $DateString = Get-Date $DateInputString -AsUTC -Format u
-    return $DateString.ToString()
-}
-Set-Alias -Name Get-IsoDate -Value ConvertTo-IsoDate
-
-function Get-IsoDateFormat {
-    <#
-    .SYNOPSIS
-    converts date to ISO 8601 format YYYY-MM-DDTHH:MM:SSZ 
-    does not shift time to UTC - just formats
-    #>
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory = $true)]
-        [string]$DateInputString
-    )
-    $DateString = Get-Date $DateInputString -Format u
-    return $DateString.ToString()
-}
-Set-Alias -Name ConvertTo-IsoDateFormat -Value Get-IsoDateFormat
-
-function Get-LocalDate {
-    <#
-    .SYNOPSIS
-    converts date-time to culture format and timezone where executed. 
-    #>
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory = $true)]
-        [string]$DateInputString
-    )
-    $DateString = (Get-Date $DateInputString).ToLocalTime()
-    return $DateString.ToString()
-}
-Set-Alias -Name ConvertTo-LocalTime -Value Get-LocalDate
 
 function Send-CanvasUpdate {
     [CmdletBinding()]
@@ -270,7 +152,6 @@ function Send-CanvasUpdateFormDataWithVars {
         SkipHttpErrorCheck = $true
     }
     $result = Invoke-RestMethod @RestParams
-    #$result = Invoke-WebRequest -Method POST -Uri $CanvasApiUrl -Headers @{Authorization=" Bearer $($TokenString)"} -Form $RequestBody
     
     $ReturnData = @{
         result = $result
@@ -279,6 +160,25 @@ function Send-CanvasUpdateFormDataWithVars {
     }
 
     return $ReturnData
+}
+
+function Get-CanvasSisSshaPasswordText {
+    <#
+    .SYNOPSIS
+    creaet a hashed value to include in an SIS user file to upload
+    see https://canvas.instructure.com/doc/api/file.sis_csv.html
+    one can use Get-NewPasswordText to generate a salt value
+    #>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$PassPlainText
+
+        ,[Parameter(Mandatory=$true)]
+        [string]$PassTheSalt
+    )
+    $SisPw = "{SSHA}" + (Get-Base64String -InputString ("{0}{1}" -f (Get-StringHash -StringToHash ("{0}{1}" -f $PassPlainText,$PassTheSalt) -HashAlgorithm SHA1).ToLower(),$PassTheSalt))
+    return $SisPw
 }
 
 function Get-CanvasItem {
@@ -425,30 +325,90 @@ function Get-CanvasItemListWithVars {
 }
 
 function Get-CanvasItemListFlattened {
+    <#
+    .SYNOPSIS
+    Returns an unpaginated list when multiple API calls are required to retrieve all items
+
+    .DESCRIPTION
+    Returns an unpaginated list when multiple API calls are required to retrieve all items. 
+    Uses custom header parsing to determine next page when handling paginated results and 
+    places all results into a "flattened" list. This obviates dealing with the paginated 
+    groups of results returned by using the FollowRelLink option of Invoke-RestMethod.
+
+    .PARAMETER ApiUrl
+    full API route including protocol, domain and path
+
+    .PARAMETER TokenFilePath
+    path of the file containing the token text stored as a secure string
+
+    .PARAMETER ResultsPerCall
+    page size of results to return for each API call
+
+    .PARAMETER MaxApiCalls
+    maximum number of times to allow results API calls
+    #>
     param (
-        [string]$ApiUrl,  # Base URL of the Canvas instance (e.g., https://yourinstitution.instructure.com/api/v1)
-        [string]$AccessToken  # Canvas API access token
+        [Alias("CanvasApiUrl")]
+        [Parameter(Mandatory)]
+        [string]$ApiUrl
+        
+        ,[Parameter(Mandatory)]
+        [string]$TokenFilePath
+        
+        ,[Alias("PerPage")]
+        [Parameter(Mandatory=$false)]
+        [int32]$ResultsPerCall=50
+
+        ,[Parameter(Mandatory=$false)]
+        [int32]$MaxApiCalls=20
     )
-
-    $endpoint = "$ApiUrl"
-    $allPages = @()
-
+    $TokenString = Get-CanvasTokenStringSecured -KeeperFile $TokenFilePath
+    $allResults = @()
+    $LoopMax = $MaxApiCalls
+    $LoopI = 1
     do {
-        $response = Invoke-RestMethod -Uri $ApiUrl -Authentication Bearer -Token $AccessToken -Method Get -ResponseHeadersVariable headersr
+        $LoopI ++
+        
+        # update API url with result size per page
+        if ($ResultsPerCall -ne 10){
+            if (($ApiUrl.Contains("per_page")) -eq $false){
+                # check if there are already query parameters
+                if (($ApiUrl.Contains("`?")) -eq $false){
+                    $ApiUrl += "?per_page={0}" -f $ResultsPerCall.ToString()
+                }
+                else {
+                    $ApiUrl += "&per_page={0}" -f $ResultsPerCall.ToString()
+                }
+            }
+        }
+
+        $response = Invoke-RestMethod -Uri $ApiUrl -Authentication Bearer -Token $TokenString -Method Get -ResponseHeadersVariable headersr
         
         # Append retrieved pages to the result list
-        $allPages += $response
+        $allResults += $response
         
         # Check for pagination link in response headers
         $linkHeader = $headersr.Link
-        $nextLink = if ($linkHeader -match '<(.*?)>; rel="next",<') { $matches[0] } else { $null }
-        write-host  "$linkHeader"
-        write-host $headersr
-        write-host $linkHeader
-        $endpoint = $nextLink
-    } while ($endpoint)
-
-    return $allPages
+        if($headersr.Link){
+            $HeaderLinks = $linkHeader.split(',')
+            # hash table to store header links
+            $htHL = @{}
+            foreach ($HeaderLink in $HeaderLinks){
+                <# example link header: 
+                    <https://domain/api_route?page=bookmark:GUID&per_page=20>; rel="next",
+                    <https://domain/api_route?page=bookmark:GUID&per_page=20>; rel="current",
+                    <https://domain/api_route?page=first&per_page=20>; rel="first
+                #>
+                $parts = $HeaderLink.split('; ');
+                $partsKey = $parts[1].replace('rel=','').replace('"','')
+                $partsValue = $parts[0].replace('<','').replace('>','')
+                $htHL.Add($partsKey,$partsValue);
+            }
+            $ApiUrl = $htHL['next']
+            # Write-Verbose "Next: $($ApiUrl)"
+        }
+    } while ($ApiUrl -and ($LoopI -le $LoopMax) -and $headersr.Link)
+    return $allResults
 }
 
 function Send-CanvasSisFile {
@@ -868,7 +828,8 @@ function Get-CanvasCourseSections {
         [string]$TokenFilePath
     )
     $CourseUrl = "https://{0}/api/v1/courses/{1}/sections" -f $global:CanvasSite,$CourseId
-    $CourseData = Get-CanvasItemList -CanvasApiUrl $CourseUrl -PerPage 100 -TokenFilePath $TokenFilePath
+    # $CourseData = Get-CanvasItemList -CanvasApiUrl $CourseUrl -PerPage 100 -TokenFilePath $TokenFilePath
+    $CourseData = Get-CanvasItemListFlattened -ApiUrl $CourseUrl -ResultsPerCall 100 -TokenFilePath $TokenFilePath
     return $CourseData    
 }
 
@@ -1060,14 +1021,17 @@ function Get-CanvasCourseMemberships {
     # build the URL
     $CourseUsersUrl = "https://{0}/api/v1/courses/{1}/enrollments" -f $global:CanvasSite,$CourseId
     # construct the parameters
+    <#
     $MembershipListParams = @{
         CanvasApiUrl = $CourseUsersUrl
         TokenFilePath = $TokenFilePath
         PerPage = 75
     }
     if ($MaxResults -ne 150){$MembershipListParams.Add("MaxResults",$MaxResults)}
+    #>
     # call the requestor
-    Get-CanvasItemList @MembershipListParams
+    # Get-CanvasItemList @MembershipListParams
+    Get-CanvasItemListFlattened -ApiUrl $CourseUsersUrl -ResultsPerCall 75 -TokenFilePath $tknPath
 }
 Set-Alias -Name Get-CanvasCourseEnrollments -Value Get-CanvasCourseMemberships
 
@@ -1316,7 +1280,8 @@ function Get-CanvasCourseExports {
         [string]$TokenFilePath
     )
     $ExportListUrl = "https://{0}/api/v1/courses/{1}/content_exports" -f $global:CanvasSite,$CourseId
-    $result = Get-CanvasItemList -CanvasApiUrl $ExportListUrl -TokenFilePath $TokenFilePath
+    # $result = Get-CanvasItemList -CanvasApiUrl $ExportListUrl -TokenFilePath $TokenFilePath
+    $result = Get-CanvasItemListFlattened -ApiUrl $ExportListUrl -TokenFilePath $TokenFilePath
     return $result
 }
 
@@ -1659,13 +1624,8 @@ function Get-CanvasCoursePages {
     }
     # build the URL
     $CoursePagessUrl = "https://{0}/api/v1/courses/{1}/pages{2}{3}" -f $global:CanvasSite,$CourseId,$SearchOptions,$ResultPageSize
-    # construct the parameters
-    $PageListParams = @{
-        "CanvasApiUrl" = $CoursePagessUrl
-        "TokenFilePath" = $TokenFilePath
-    }
-    # call the requestor
-    Get-CanvasItemList @PageListParams       
+    $pagelist = Get-CanvasItemListFlattened -ApiUrl $CoursePagessUrl -TokenFilePath $TokenFilePath -ResultsPerCall 99
+    return $pagelist
 }
 
 function Get-CanvasCourseModules {
@@ -1706,7 +1666,7 @@ function Get-CanvasCourseModules {
         PerPage = 100
     }
     # call the requestor
-    Get-CanvasItemList @ModuleListParams   
+    Get-CanvasItemListFlattened @ModuleListParams
 }
 
 function Get-CanvasCourseFiles {
@@ -1745,7 +1705,7 @@ function Get-CanvasCourseFiles {
         "TokenFilePath" = $TokenFilePath
     }
     # call the requestor
-    Get-CanvasItemList @FileListParams      
+    Get-CanvasItemListFlattened @FileListParams      
 }
 
 function Get-CanvasCourseTabs {
@@ -1777,7 +1737,7 @@ function Get-CanvasCourseTabs {
         PerPage = 100
     }
     # call the requestor
-    $results = Get-CanvasItemList @ListParams
+    $results = Get-CanvasItemListFlattened @ListParams
     return $results
 }
 
@@ -1802,7 +1762,7 @@ function Get-CanvasSubAccounts {
         TokenFilePath = $TokenFilePath
         PerPage = "100"
     }
-    Get-CanvasItemList @AcctListParams
+    Get-CanvasItemListFlattened @AcctListParams
 }
 
 function Get-CanvasUserLogins {
@@ -1823,7 +1783,7 @@ function Get-CanvasUserLogins {
         [string]$TokenFilePath            
     )
     $apiUrl = "https://{0}/api/v1/users/sis_login_id:{1}/logins" -f $global:CanvasSite,$CanvasUser
-    Get-CanvasItemList -CanvasApiUrl $apiUrl -TokenFilePath $TokenFilePath
+    Get-CanvasItemListFlattened -CanvasApiUrl $apiUrl -TokenFilePath $TokenFilePath
 }
 
 function Set-CanvasLoginStatus {
@@ -1938,8 +1898,8 @@ function Get-CanvasTerms {
         [string]$Account="self"
     )
     # GET /api/v1/accounts/:account_id/terms
-    $TermsUrl = "https://{0}/api/v1/accounts/{1}/terms" -f $global:CanvasSite,$Account
-    $TermList = Get-CanvasItemList -CanvasApiUrl $TermsUrl -TokenFilePath $TokenFilePath -PerPage 100
+    $TermsUrl = "https://{0}/api/v1/accounts/{1}/terms?include=course_count" -f $global:CanvasSite,$Account
+    $TermList = Get-CanvasItemListFlattened -CanvasApiUrl $TermsUrl -TokenFilePath $TokenFilePath -PerPage 100
     return $TermList.enrollment_terms
 }
 Set-Alias -Name Get-CanvasCourseTerms -Value Get-CanvasTerms
@@ -2116,19 +2076,33 @@ function Start-CanvasUserReportForTerm {
         [string]$ReportName="sis_export_csv",
 
         [Parameter(Mandatory=$false)]
-        [string]$IncludeUsers="true",
+        [bool]$IncludeUsers=$true,
 
         [Parameter(Mandatory=$false)]
-        [string]$IncludeCourses="true",
+        [bool]$IncludeCourses=$true,
+
+        [Parameter(Mandatory=$false)]
+        [bool]$IncludeSections=$true,
+
+        [Parameter(Mandatory=$false)]
+        [bool]$IncludeEnrollments=$true,
 
         [Parameter(Mandatory=$true)]
         [string]$TokenFilePath
     )
     
     $ReportUrl = "https://{0}/api/v1/accounts/{1}/reports/{2}" -f $global:CanvasSite,$Account,$ReportName
-    $Paramaters = @{parameters = @{enrollment_term_id = $TermId;users = "$IncludeUsers";courses = $IncludeCourses   ;sections = "true";enrollments = "true"}} | ConvertTo-Json
-    Send-CanvasUpdate -CanvasApiUrl $ReportUrl -RequestBody $Paramaters -ApiVerb "POST" -TokenFilePath $TokenFilePath
+    $ParamatersData = @{parameters = @{
+        enrollment_term_id = $TermId;
+        users = $IncludeUsers;
+        courses = $IncludeCourses;
+        sections = $IncludeSections;
+        enrollments = $IncludeEnrollments}
+    }
+    $ParamatersBody = $ParamatersData | ConvertTo-Json
+    Send-CanvasUpdate -CanvasApiUrl $ReportUrl -RequestBody $ParamatersBody -ApiVerb "POST" -TokenFilePath $TokenFilePath
 }
+Set-Alias -Name Start-CanvasSisReport -Value Start-CanvasUserReportForTerm
 
 function Get-CurrentTermCode {
     <#
@@ -2526,89 +2500,6 @@ function New-CanvasCourseSection {
     # send the update
     $NewSectionResult = Send-CanvasUpdate @NewSectionParams
     return $NewSectionResult
-}
-
-function Get-CollegeEmailAddressFromAD {
-    <#
-    .SYNOPSIS
-    retrieve a user's email address by searching Active directory. Requires the RSAT Active Directory PowerShell tools
-
-    .PARAMETER CollegeUsername
-    username to lookup in AD
-    #>
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory=$true)]
-        [string]$CollegeUsername
-    )
-    $EmamilSearchResult = "not found"
-    try {
-        $ADSearchResult = Get-ADUser -Identity $CollegeUsername -Properties EmailAddress
-        if (($null -ne $ADSearchResult) -and ($null -ne $ADSearchResult.EmailAddress) -and ($ADSearchResult.EmailAddress -ne "")){
-            $EmamilSearchResult = $ADSearchResult.EmailAddress.ToLower()
-        }
-    } catch { 
-        #log error conditions 
-    }
-    return $EmamilSearchResult
-}
-
-function Get-CollegeEmailAddressFromLdap {
-    <#
-    .SYNOPSIS
-    retrieve a user's email address by searching Active directory via LDAP.
-
-    .PARAMETER CollegeUsername
-    username to lookup
-    #>
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory=$true)]
-        [string]$CollegeUsername
-    )
-    $EmamilSearchResult = "not found"
-    try {
-        $DsSearchResult = Get-CollegeUserInfoFromLDAP -CollegeUsername $CollegeUsername
-        if (($null -ne $DsSearchResult) -and ($null -ne $DsSearchResult.mail) -and ($ADSearchResult.mail -ne "")){
-            $EmamilSearchResult = $DsSearchResult.mail.ToLower()
-        }
-    } catch { 
-        #log error conditions 
-    }
-    return $EmamilSearchResult
-}
-
-function Get-CollegeUserInfoFromLDAP {
-    <#
-    .SYNOPSIS
-    retrieve email address using LDAP to query the identity directory
-
-    .PARAMETER CollegeUsername
-    username to lookup in AD
-
-    .PARAMETER DsDomain
-    domain for the directory
-
-    .PARAMETER DsLdapPath
-    LDAP organization unit path for the directory tree to search
-    #>
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory)]
-        [string]$CollegeUsername,
-
-        [Parameter(Mandatory=$false)]
-        [string]$DsDomain="$($global:DirectoryDomain)",
-
-        [Parameter(Mandatory=$false)]
-        [string]$DsLdapPath="$($global:DirectoryUserPath)"
-    )
-    $DSEntry = New-Object System.DirectoryServices.DirectoryEntry("LDAP://$($DsDomain)/$($DsLdapPath)")
-    $DSSearcher = New-Object System.DirectoryServices.DirectorySearcher($DSEntry)
-    $DSSearcher.PropertiesToLoad.AddRange(@("samAccountName","displayName","givenName","sn","title","userprincipalname","mail"))
-    $DSSearcher.Filter = "(&(objectClass=user)(samaccountname=$($CollegeUsername)))"
-    $SearchResult = $DSSearcher.FindOne()
-    return $SearchResult.Properties
 }
 
 function Set-CanvasCourseFormat {
@@ -3024,18 +2915,21 @@ function Get-CanvasCourseAnnouncements {
         [string]$TokenFilePath
     )
     # format the api url
-    # $ApiUrl = "https://{0}/api/v1/announcements?context_code[course]={1}&latest_only=true" -f $global:CanvasSite, $CourseId
-    $ApiUrl2 = "https://{0}/api/v1/courses/{1}/discussion_topics?only_announcements=true" -f $global:CanvasSite, $CourseId
+    $ApiUrl = "https://{0}/api/v1/courses/{1}/discussion_topics?only_announcements=true" -f $global:CanvasSite, $CourseId
     
-    # configure upload parameters
+    <# configure upload parameters
     $DataParams = @{
         CanvasApiUrl = $ApiUrl2
         PerPage = 99
         TokenFilePath = $TokenFilePath
+    }#>
+    
+    # $ListResult = Get-CanvasItemListWithVars @DataParams
+    $ListResult = Get-CanvasItemListFlattened -ApiUrl $ApiUrl -ResultsPerCall 99 -TokenFilePath $tknPath
+    $ResultData = @{
+        result = $ListResult
     }
-    # send the update
-    $ListResult = Get-CanvasItemListWithVars @DataParams
-    return $ListResult
+    return $ResultData
 }
 
 function Update-CanvasPageContents {
@@ -3113,8 +3007,12 @@ function Get-CanvasCustomGradeColumns {
     $ApiUrl = "https://{0}/api/v1/courses/{1}/custom_gradebook_columns" -f $global:CanvasSite, $CourseId
 
     # send the request
-    $ItemResult = Get-CanvasItemListWithVars -CanvasApiUrl $ApiUrl -TokenFilePath $TokenFilePath
-    return $ItemResult
+    # $ItemResult = Get-CanvasItemListWithVars -CanvasApiUrl $ApiUrl -TokenFilePath $TokenFilePath
+    $GradeColumns = Get-CanvasItemListFlattened -ApiUrl $ApiUrl -TokenFilePath $tknPath
+    $GradeColumnsData = @{
+        result = $GradeColumns
+    }
+    return $GradeColumnsData
 }
 
 function Remove-CanvasCustomGradeColumn {
@@ -3274,8 +3172,9 @@ function Get-CanvasModuleItems {
         [string]$TokenFilePath
     )
     $ApiUrl = "https://{0}/api/v1/courses/{1}/modules/{2}/items" -f $global:CanvasSite, $CourseId, $ModuleId
-    $ModuleItems = Get-CanvasItemList -CanvasApiUrl $ApiUrl -TokenFilePath $TokenFilePath -PerPage 99
-    return $ModuleItems
+    # $ModuleItems = Get-CanvasItemList -CanvasApiUrl $ApiUrl -TokenFilePath $TokenFilePath -PerPage 99
+    $ModuleItemList = Get-CanvasItemListFlattened -ApiUrl $ApiUrl -TokenFilePath $TokenFilePath
+    return $ModuleItemList
 }
 
 function Set-CanvasModuleItemNewTabStatus {
@@ -3919,7 +3818,7 @@ function Get-CanvasCourseAssignments {
         PerPage = 99
     }
     # send the request
-    $ItemListResult = Get-CanvasItemList @DataParams
+    $ItemListResult = Get-CanvasItemListFlattened @DataParams
     return $ItemListResult
 }
 
@@ -4049,7 +3948,7 @@ function Get-CanvasDeveloperKeys {
     )
     # format the api url
     $ApiUrl = "https://{0}/api/v1/accounts/{1}/developer_keys" -f $global:CanvasSite, $AccountId
-    $DevKeys = Get-CanvasItemList -CanvasApiUrl $ApiUrl -TokenFilePath $tknPath -PerPage 100
+    $DevKeys = Get-CanvasItemListFlattened -CanvasApiUrl $ApiUrl -TokenFilePath $tknPath -PerPage 100
     return $DevKeys
 }
 
@@ -4065,8 +3964,8 @@ function Get-CanvasLtis {
     )
     # format the api url
     $ApiUrl = "https://{0}/api/v1/accounts/{1}/external_tools" -f $global:CanvasSite, $AccountId
-    $DevKeys = Get-CanvasItemList -CanvasApiUrl $ApiUrl -TokenFilePath $tknPath -PerPage 100
-    return $DevKeys
+    $LtiList = Get-CanvasItemListFlattened -CanvasApiUrl $ApiUrl -TokenFilePath $tknPath -PerPage 100
+    return $LtiList
 }
 <#
 function new-genericfunction {

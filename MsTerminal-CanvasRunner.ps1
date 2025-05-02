@@ -1,16 +1,12 @@
-import-module ~\dev\LMS-Automation\scripts\Canvas-API-Lib.ps1
 import-module ~\dev\LMS-AdminTasks\Canvas-API-Tasks.ps1
 $beta = "school.beta.instructure.com"
 $prod = "school.instructure.com"
 $global:CanvasSite = $prod
+$global:CanvasSite = $prod
+$global:DirectoryDomain = "institution.tld"
+$global:DirectoryUserPath = "OU=container name,DC=DirectoryDomain,DC=DirectoryTld"
 $host.ui.rawui.WindowTitle = "Canvas Runner"
 [string]$ConsoleLoggerName = "{1}\logs\CanvasRunnerLog-{0}.log" -f (Get-Date -uFormat %Y-%m-%d_%H.%M),$env:systemdrive
-
-$tknPath = "~\Apps\Canvas\CanvasAdmin"
-$tknSis = "~\Apps\Canvas\SisAutomations"
-
-$tplResources = "sis_course_id:TPL-Resources"
-$tplCommon = "sis_course_id:TPL-Common"
 
 function Set-EnvVar {
     $env:CNVSITE=$($global:CanvasSite)
