@@ -33,8 +33,6 @@ Add-Type -AssemblyName System.Web
 $global:CanvasSite = "institution.beta.instructure.com"
 $global:LorSite = "lor.instructure.com"
 $global:CourseRoleIds = @()
-$global:DirectoryDomain = "domain.tld"
-$global:DirectoryUserPath = "OU=User Org Unit,DC=domain,DC=tld"
 
 function Send-CanvasUpdate {
     [CmdletBinding()]
@@ -361,6 +359,11 @@ function Get-CanvasItemListFlattened {
 
         ,[Parameter(Mandatory=$false)]
         [int32]$MaxApiCalls=20
+
+        ,
+        [Alias("MaxResults")]
+        [Parameter(DontShow)]
+        $OldParams
     )
     $TokenString = Get-CanvasTokenStringSecured -KeeperFile $TokenFilePath
     $allResults = @()
@@ -1016,26 +1019,66 @@ function Get-CanvasCourseMemberships {
         [string]$TokenFilePath,
 
         [Parameter(Mandatory=$false)]
-        [int32]$MaxResults = 150
+        [int32]$MaxResults = 150,
+
+        [Parameter(Mandatory=$false)]
+        [string]$Role=""
     )
     # build the URL
     $CourseUsersUrl = "https://{0}/api/v1/courses/{1}/enrollments" -f $global:CanvasSite,$CourseId
-    # construct the parameters
-    <#
-    $MembershipListParams = @{
-        CanvasApiUrl = $CourseUsersUrl
-        TokenFilePath = $TokenFilePath
-        PerPage = 75
+    
+    if ($Role -ne ""){
+        $CourseRole = ""
+        switch ($Role.ToLower()){
+            { @("teach","teacher","teacherenrollment","instructor","instructorenrollment") -contains $_} {
+                $CourseRole = "TeacherEnrollment"
+            }
+            { @("ta","assistant") -contains $_} { 
+                $CourseRole = "TaEnrollment"
+            }
+            { @("student","studentenrollment","stu") -contains $_} {
+                $CourseRole = "StudentEnrollment"
+            }
+            { @("ea","eduassist","eduassistant","educationalassistant") -contains $_} {
+                $CourseRole = "Educational%20Assistant"
+            }
+            { @("builder","designer") -contains $_} { 
+                $CourseRole = "DesignerEnrollment"
+            }
+            { @("communicator","tutor") -contains $_} {
+                $CourseRole = "Communicator"
+            }
+            { @("proctor","invigilator") -contains $_} {
+                $CourseRole = Get-UrlEncodedString "Proctor (Testing Center)"
+            }
+            { @("accreditor","dean","reviewer") -contains $_} {
+                $CourseRole = "Accreditor"
+            }
+            default {
+                $CourseRole = Get-UrlEncodedString $Role
+            }
+        }
+        $CourseUsersUrl = $CourseUsersUrl + "?role=" + $CourseRole
     }
-    if ($MaxResults -ne 150){$MembershipListParams.Add("MaxResults",$MaxResults)}
-    #>
-    # call the requestor
-    # Get-CanvasItemList @MembershipListParams
+
     Get-CanvasItemListFlattened -ApiUrl $CourseUsersUrl -ResultsPerCall 75 -TokenFilePath $tknPath
 }
 Set-Alias -Name Get-CanvasCourseEnrollments -Value Get-CanvasCourseMemberships
 
 function Get-CanvasUserMemberships {
+    <#
+    .SYNOPSIS
+    get canvas enrollments for user
+
+    .DESCRIPTION
+    get canvas enrollments for a user. By default only returns active
+    
+    API Allowed Values for state:
+    active, invited, creation_pending, deleted, 
+    rejected, completed, inactive, 
+    current_and_invited, current_and_future, current_future_and_restricted, current_and_concluded
+    
+    #>
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true)]
@@ -1243,6 +1286,7 @@ function New-CanvasCommonsImport {
     $UploadBody = $UploadBody | ConvertTo-Json
     Invoke-RestMethod -Method POST -Uri $UploadUrl -Body $UploadBody -Headers $CommonsHeader -ContentType "application/json"
 }
+Set-Alias -Name Start-CanvasCommonsImport -Value New-CanvasCommonsImport
 
 function New-CanvasCourseExport {
     [CmdletBinding()]
@@ -1880,6 +1924,70 @@ function Remove-CanvasAdmin {
     Send-CanvasUpdate  @UpdateParams    
 }
 
+function New-CanvasAdmin {
+    <#
+    .Synopsis
+    Remove a user's admin access.
+    .Parameter CanvasUser
+    login ID for lookup, example sis_login_id:jdoe123
+    .Parameter TokenFilePath
+    path to the secure string file containing the encrypted Canvas user token
+    .Parameter AccountId
+    account from which to remove the admin rights
+    .Parameter RoleId
+    the role to which the user is currently assigned
+    #>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$CanvasUser,
+
+        [Parameter(Mandatory=$true)]
+        [string]$AccountId,
+        
+        [Parameter(Mandatory=$true)]
+        [string]$RoleId,
+
+        [Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # POST /api/v1/accounts/:account_id/admins/:user_id
+    $AdminUrl = "https://{0}/api/v1/accounts/{1}/admins" -f $global:CanvasSite,$AccountId
+    $UserInfo = Get-CanvasUserInfo -CanvasUserId $CanvasUser -TokenFilePath $tknPath
+    #$RoleInfo = Get-CanvasRoles
+    $AdminSetup = @{
+        user_id = $UserInfo.id
+        role_id = $RoleId
+        send_confirmation = $false
+    }
+    $UpdateJson = $AdminSetup | ConvertTo-Json
+    $UpdateParams = @{
+        RequestBody = $UpdateJson
+        CanvasApiUrl = $AdminUrl
+        ApiVerb = "POST"
+        TokenFilePath = $TokenFilePath
+    }    
+    Send-CanvasUpdate  @UpdateParams    
+}
+
+function Get-CanvasRole {
+    [CmdletBinding()]
+    param (
+    
+        [Parameter(Mandatory=$true)]
+        [string]$AccountId,
+
+        [Parameter(Mandatory=$true)]
+        [string]$RoleId,
+
+        [Parameter(Mandatory=$true)]
+        [string]$TokenFilePath        
+    )
+    # GET /api/v1/accounts/:account_id/roles/:id
+    $RoleUrl = "https://{0}/api/v1/accounts/{1}/{2}" -f $global:CanvasSite, $AccountId, $RoleId
+    $RoleInfo = Get-CanvasItem -CanvasApiUrl $RoleUrl -TokenFilePath $TokenFilePath
+    return $RoleInfo
+}
 function Get-CanvasTerms {
     <#
     .Synopsis
@@ -1904,6 +2012,21 @@ function Get-CanvasTerms {
 }
 Set-Alias -Name Get-CanvasCourseTerms -Value Get-CanvasTerms
 Set-Alias -Name Get-CanvasEnrollmentTerms -Value Get-CanvasTerms
+
+function Get-CanvasAccountDetails {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        [string]$AccountId,
+    
+        [Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    #GET /api/v1/accounts/:id
+    $AccountUrl = "https://{0}/api/v1/accounts/{1}" -f $global:CanvasSite, $AccountId
+    $AcctResult = Get-CanvasItem -CanvasApiUrl $AccountUrl -TokenFilePath $TokenFilePath
+    return $AcctResult
+}
 
 function Get-CanvasTerm {
     <#
@@ -2315,6 +2438,7 @@ function Start-CanvasSisJobMonitor {
     return $SisJobMonResult
 }
 
+<#
 function Set-CanvasCourseTeamsClassEnabled {
     [CmdletBinding()]
     param (
@@ -2344,7 +2468,7 @@ function Set-CanvasCourseTeamsMeetingsEnabled {
     $UpdateBody = @{client_id = "170000000000703"}|ConvertTo-Json
     Send-CanvasUpdate -CanvasApiUrl $CourseToolUrl -RequestBody $UpdateBody -ApiVerb "POST" -TokenFilePath $TokenFilePath
 }
-
+#>
 function Set-CanvasCourseTabVisibility {
     [CmdletBinding()]
     param (
@@ -2367,6 +2491,7 @@ function Set-CanvasCourseTabVisibility {
 
 }
 
+<#
 function Set-AllyConfigVisibilityAdmin {
     [CmdletBinding()]
     param (
@@ -2388,6 +2513,7 @@ function Set-AllyConfigVisibilityAdmin {
     $UpdateResult = Send-CanvasUpdate @UpdateParams
     return $UpdateResult
 }
+#>
 
 function Set-CanvasToolVisibilityDefault {
     [CmdletBinding()]
@@ -2592,7 +2718,16 @@ function Remove-CanvasCoursePage {
         TokenFilePath = $TokenFilePath
     }
     # send the update
-    Send-CanvasUpdate @NewDataParams
+    $result = Send-CanvasUpdate @NewDataParams
+    $msg = "page deleted $($result.title)"
+    if (Test-LogExistence){
+        Add-LogEntry $msg
+    }
+    else {
+        if ($VerbosePreference -in @("Continue","SilentlyContinue")){
+            Write-Host $msg
+        }
+    }    
 }
 
 function Remove-CanvasCoursePages {
@@ -2609,16 +2744,14 @@ function Remove-CanvasCoursePages {
     
     $Pages = Get-CanvasCoursePages -CanvasCourse $CourseId -TokenFilePath $TokenFilePath
     foreach ($Page in $Pages){
-        $ApiUrl = "https://{0}/api/v1/courses/{1}/pages/{2}" -f $global:CanvasSite,$CourseId,$Page.page_id
-        # configure upload parameters
-        $NewDataParams = @{
-            CanvasApiUrl = $ApiUrl
-            ApiVerb = "DELETE"
+        # configure page parameters
+        $DelDataParams = @{
+            CourseId = $CourseId
+            PageId = $Page.page_id
             TokenFilePath = $TokenFilePath
         }
         # send the update
-        $result = Send-CanvasUpdate @NewDataParams
-        Write-Host "page deleted $($result.title)"
+        Remove-CanvasCoursePage @DelDataParams
     }
 }
 
@@ -2633,19 +2766,16 @@ function Remove-CanvasCourseModules {
         ,[Parameter(Mandatory=$true)]
         [string]$TokenFilePath
     )
-    
     $Modules = Get-CanvasCourseModules -CanvasCourse $CourseId -TokenFilePath $TokenFilePath
     foreach ($Module in $Modules){
-        $ApiUrl = "https://{0}/api/v1/courses/{1}/modules/{2}" -f $global:CanvasSite,$CourseId,$Module.id
         # configure upload parameters
         $NewDataParams = @{
-            CanvasApiUrl = $ApiUrl
-            ApiVerb = "DELETE"
+            CourseId = $CourseId
+            ModuleId = $Module.id
             TokenFilePath = $TokenFilePath
         }
         # send the update
-        $result = Send-CanvasUpdate @NewDataParams
-        Write-Host "module deleted $($result.name)"
+        Remove-CanvasCourseModule @NewDataParams
     }
 }
 
@@ -2672,7 +2802,16 @@ function Remove-CanvasCourseModule {
     }
     # send the update
     $result = Send-CanvasUpdate @DelDataParams
-    Write-Host "module deleted $($result.name)"
+
+    $msg = "module deleted $($result.name)"
+    if (Test-LogExistence){
+        Add-LogEntry $msg
+    }
+    else {
+        if ($VerbosePreference -in @("Continue","SilentlyContinue")){
+            Write-Host $msg
+        }
+    }
 }
 function Get-CanvasCourseAssignmentGroups {
     [CmdletBinding()]
@@ -3901,6 +4040,7 @@ function Remove-CanvasCourseDiscussionTopic {
     $ItemResult = Send-CanvasUpdate @DataParams
     return $ItemResult
 }
+
 function Remove-CanvasCourseAnnouncements {
     [CmdletBinding()]
     param (
@@ -3967,6 +4107,98 @@ function Get-CanvasLtis {
     $LtiList = Get-CanvasItemListFlattened -CanvasApiUrl $ApiUrl -TokenFilePath $tknPath -PerPage 100
     return $LtiList
 }
+
+function Export-CanvasSisUserFile {
+    <#
+    .SYNOPSIS
+    build an SIS Canvas user file based on a object created by qurying AD group membership
+    each user is prcessed using LDAP lookups so the properties are: 
+    displayname,samaccountname,adspath,givenname,sn,mail,userprincipalname,title,useraccountcontrol
+    .PARAMETER UserList
+    PSCustom Object resulting from querying get-adgroupmember
+
+    .PARAMETER ExportFilePath
+    full file path to output the user csv to
+
+    .PARAMETER StatusMatchActive
+    user status to match from individual LDAP lookups (useraccountcontrol)
+    common in AD is 512 for enabled
+    ref: https://learn.microsoft.com/en-us/troubleshoot/windows-server/active-directory/useraccountcontrol-manipulate-account-properties#useraccountcontrol-values
+    
+    .PARAMETER StatusSis
+    user status to add to CSV file. acceptable values: active,suspended,deleted
+    if active is not selected, not equals will be used to match the StatusMatchActive parameter
+
+    ref: https://canvas.instructure.com/doc/api/file.sis_csv.html
+    #>
+    param(
+        [Parameter(Mandatory=$true)]
+        $UserList
+        
+        ,[Parameter(Mandatory=$true)]
+        [string]
+        $ExportFilePath
+
+        ,[Parameter(Mandatory=$true)]
+        [string]
+        $StatusMatchActive
+
+        ,[ValidateSet("active","suspended","deleted", IgnoreCase = $true)]
+        [Parameter(Mandatory = $true)]
+        [string]$StatusSis
+
+        ,[Parameter(Mandatory)]
+        [string]$DirectoryDomain
+
+        ,[Parameter(Mandatory)]
+        [string]$UserOu
+    )
+    Add-LogEntry "$($UserList.Count.ToString()) people found in list"
+    $NumEnabled = 0
+    foreach ($objGroupUser in $UserList){
+        # assemble and validate the data
+		$userid = $objGroupUser.samaccountname
+        # query for the user info
+		$UserLookParams = @{
+            CollegeUsername = $userid
+            DsDomain = $DirectoryDomain
+            DsLdapPath = $UserOu
+        }
+        $userData = Get-UserInfoFromLDAP @UserLookParams
+        # part out the collections
+        $sn = $userData['sn'][0]
+        $gn = $userData['givenname'][0]
+        $mail = $userData['mail'][0]
+        $uac = $userData['useraccountcontrol'][0].tostring()
+        # filter matches
+        if ($StatusSis -ieq "active") {
+            if ($uac -eq $StatusMatchActive){
+                # create the data for the upload file
+                # user_id,login_id,authentication_provider_id,first_name,last_name,email,status
+                [string]$DataLine = "{0},{0}" -f $userid
+                $DataLine += ",saml,"
+                $DataLine += "{0},{1},{2},{3}" -f $gn, $sn, $mail,$StatusSis
+                # Add the data to the upload file
+                Add-Content -Path $ExportFilePath -Value $DataLine
+                $NumEnabled++
+            }
+        } else {
+            if ($uac -ne $StatusMatchActive){
+                # create the data for the upload file
+                # user_id,login_id,authentication_provider_id,first_name,last_name,email,status
+                [string]$DataLine = "{0},{0}" -f $userid
+                $DataLine += ",saml,"
+                $DataLine += "{0},{1},{2},{3}" -f $gn, $sn, $mail, $StatusSis
+                # Add the data to the upload file
+                Add-Content -Path $ExportFilePath -Value $DataLine
+                $NumEnabled++
+            }
+        }
+    }
+    Add-LogEntry "$($NumEnabled.ToString()) $($StatusSis) members configured"
+    Add-LogEntry "$($StatusSis) user file generation finished."
+}
+
 <#
 function new-genericfunction {
     [CmdletBinding()]

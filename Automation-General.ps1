@@ -1,3 +1,13 @@
+# not sure if PowerShell or Windows issue but not setting TLS can cause issues randomly by using default so always set it
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls13
+
+# ## ### #### ##### ###### ####### ########################################################################################
+# ## ### #### ##### ###### ####### ########################################################################################
+# ## ### #### ##### ###### ####### ########################################################################################
+# ## Shared vars, configure in profile or task script after including this file
+$global:DirectoryDomain = "domain.tld"
+$global:DirectoryUserPath = "OU=User Org Unit,DC=domain,DC=tld"
+$global:DirectoryGroupPath = "OU=Groups Org Unit,DC=domain,DC=tld"
 # ## ### #### ##### ###### ####### ########################################################################################
 # ## ### #### ##### ###### ####### ########################################################################################
 # ## ### #### ##### ###### ####### ########################################################################################
@@ -140,9 +150,13 @@ function ConvertFrom-UxTime {
 	param (
 		[Parameter(Mandatory=$true)]$UnixTime
 		,[Parameter(Mandatory=$false)]$TimeFormat=""
+        ,[Parameter(Mandatory=$false)][switch]$SecondsOnly
 	)
-	$EpochSeconds = $UnixTime / 1000
-	$objTime = [TimeZone]::CurrentTimeZone.ToLocalTime(([datetime]'1/1/1970').AddSeconds($EpochSeconds))
+	$EpochOffset = $UnixTime / 1000
+    if ($SecondsOnly){
+        $EpochOffset = $UnixTime
+    }
+    $objTime = [TimeZone]::CurrentTimeZone.ToLocalTime(([datetime]'1/1/1970').AddSeconds($EpochOffset))
 	[string]$HumanTime = ""
 	 # examples from 1427964343362
 	switch ($TimeFormat) {
@@ -214,8 +228,14 @@ function Add-LogEntry {
         [string]$LogMsg
     )
     $stamp = Get-LogTimestamp
-    Add-Content -path $global:LogFilePath -value "$stamp $LogMsg"
-    Write-Verbose "$stamp$LogMsg"
+    $stampdMsg = "$($stamp) $($LogMsg)"
+    Add-Content -path $global:LogFilePath -value $stampdMsg
+    if ($VerbosePreference -eq "SilentlyContinue"){
+        Write-Host $stampdMsg
+    } 
+    elseif ($VerbosePreference -eq "Continue") {
+        Write-Verbose $stampdMsg
+    }
 }
 
 function Test-LogStatus {
@@ -247,6 +267,14 @@ function Test-LogStatus {
             }
         } # end file does not exist
     } # end specified log check
+}
+
+function Test-LogExistence {
+    [bool]$logexists = $false
+    if (!([string]::IsNullOrEmpty($global:LogFilePath))) {
+        $logexists = $true
+    }
+    return $logexists
 }
 # ## ### #### ##### ###### ####### ########################################################################################
 # ## ### #### ##### ###### ####### ########################################################################################
@@ -316,48 +344,22 @@ function Get-ArchivePath {
 # ## ### #### ##### ###### ####### ########################################################################################
 # ## ### #### ##### ###### ####### ########################################################################################
 # ## Directory Services Functions
-function ConvertFrom-ADGroupMembers-ToCanvasSisUserFile {
+function ConvertFrom-ADGroupMembers {
     <#
     .SYNOPSIS
-    Short description
+    Creates custom object for members found in group
 
     .DESCRIPTION
-    Long description
+    Creates PowerShell custom object for members found in an Active Directory security group
+    *Requires the AD powershell tools found in RSAT
     #>
     Param(
         [Parameter(Mandatory)]
         [String]$ADGroup
-        
-        ,[Parameter(Mandatory)]
-        [String]$Outfile
     )
-    $UserHeader = "user_id,login_id,authentication_provider_id,first_name,last_name,email,status"
-    Add-LogEntry "Creating user file at $OutFile"
-    Set-Content -path $Outfile -Value $UserHeader
     Add-LogEntry "Querying AD Group $ADGroup"
-    $colGroupPeople = Get-ADGroupMember $ADGroup
-    $NumPeople = $colGroupPeople.Count.ToString()
-    Add-LogEntry "$NumPeople people found in AD Group, $ADGroup"
-    $intNumEnabled = 0
-    foreach ($objGroupUser in $colGroupPeople){
-        # assemble and validate the data
-		$userid = $objGroupUser.SamAccountName
-        #   query AD for the user info
-		$userData = get-aduser $userid -properties EmailAddress,Employeeid
-        if ($userData.Enabled -eq $True){
-            # create the data for the upload file
-            # user_id,login_id,authentication_provider_id,first_name,last_name,email,status
-            [string]$DataLine = "{0},{0}" -f $userid
-            $DataLine += ",saml,"
-            $DataLine += "{0},{1},{2},active" -f $userData.GivenName,$userData.Surname,$userData.EmailAddress
-            # Add the data to the upload file
-            Add-Content -Path $Outfile -Value $DataLine
-            $intNumEnabled++
-        }
-    }
-    $strNumEnabled = $intNumEnabled.ToString()
-    Add-LogEntry "$strNumEnabled enabled members added"
-    Add-LogEntry "user generation script finished."
+    [PSCustomObject]$colGroupPeople = Get-ADGroupMember $ADGroup
+    return $colGroupPeople
 }
 
 function Get-EmailAddressFromAD {
@@ -401,7 +403,7 @@ function Get-EmailAddressFromLdap {
     )
     $EmamilSearchResult = "not found"
     try {
-        $DsSearchResult = Get-CollegeUserInfoFromLDAP -CollegeUsername $CollegeUsername
+        $DsSearchResult = Get-UserInfoFromLDAP -CollegeUsername $CollegeUsername
         if (($null -ne $DsSearchResult) -and ($null -ne $DsSearchResult.mail) -and ($DsSearchResult.mail -ne "")){
             $EmamilSearchResult = $DsSearchResult.mail.ToLower()
         }
@@ -417,6 +419,7 @@ function Get-UserInfoFromLDAP {
     .SYNOPSIS
     retrieve email address using LDAP to query the identity directory
     Still depends on Windows libraries. Not a cross-platform function
+    useraccountcontrol: 512=enabled, 514=disabled
 
     .PARAMETER CollegeUsername
     username to lookup in AD
@@ -440,12 +443,165 @@ function Get-UserInfoFromLDAP {
     )
     $DSEntry = New-Object System.DirectoryServices.DirectoryEntry("LDAP://$($DsDomain)/$($DsLdapPath)")
     $DSSearcher = New-Object System.DirectoryServices.DirectorySearcher($DSEntry)
-    $DSSearcher.PropertiesToLoad.AddRange(@("samAccountName","displayName","givenName","sn","title","userprincipalname","mail"))
+    $DSSearcher.PropertiesToLoad.AddRange(@("samAccountName","displayName","givenName","sn","title","userprincipalname","mail","userAccountControl","memberof"))
     $DSSearcher.Filter = "(&(objectClass=user)(samaccountname=$($CollegeUsername)))"
     $SearchResult = $DSSearcher.FindOne()
     return $SearchResult.Properties
 }
 Set-Alias -Name Get-CollegeUserInfoFromLDAP -Value Get-UserInfoFromLDAP
+<#
+function Get-DirectoryGroupMembershipFromLDAP {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        [string]$DirectoryGroupCn,
+
+        [Parameter(Mandatory=$false)]
+        [string]$DsDomain="$($global:DirectoryDomain)",
+
+        [Parameter(Mandatory=$false)]
+        [string]$DsLdapPath="$($global:DirectoryUserPath)"
+    )
+    $DSEntry = New-Object System.DirectoryServices.DirectoryEntry("LDAP://$($DsDomain)")
+    $DSSearcher = New-Object System.DirectoryServices.DirectorySearcher($DSEntry)
+    $DSSearcher.Filter = "(&(objectCategory=user)(memberOf=$($DirectoryGroupCn)))"
+    $SearchResult = $DSSearcher.FindAll()
+    return $SearchResult
+}
+#>
+function Get-DirectoryGroupInformation {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        [string]$DirectoryGroupName,
+
+        [Parameter(Mandatory=$false)]
+        [string]$DsDomain="$($global:DirectoryDomain)",
+
+        [Parameter(Mandatory=$false)]
+        [string]$DsLdapPath="$($global:DirectoryGroupPath)"
+    )
+    $DSEntry = New-Object System.DirectoryServices.DirectoryEntry("LDAP://$($DsDomain)")
+    $DSSearcher = New-Object System.DirectoryServices.DirectorySearcher($DSEntry)
+    $DSSearcher.Filter = "(& (objectCategory=group) (name=$($DirectoryGroupName)))"
+    $SearchResult = $DSSearcher.FindOne()
+    return $SearchResult    
+}
+
+<#
+function Test-DirectoryGroupMembership {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        [string]$CollegeUsername,
+
+        [Parameter(Mandatory)]
+        [string]$DirectoryGroup,
+
+        [Parameter(Mandatory=$false)]
+        [string]$DsDomain="$($global:DirectoryDomain)",
+
+        [Parameter(Mandatory=$false)]
+        [string]$DsLdapPath="$($global:DirectoryUserPath)"
+    )
+    $DSEntry = New-Object System.DirectoryServices.DirectoryEntry("LDAP://$($DsDomain)")
+    $DSSearcher = New-Object System.DirectoryServices.DirectorySearcher($DSEntry)
+    $DSSearcher.Filter = "(&(objectClass=user)(memberOf:1.2.840.113556.1.4.1941:=$($DirectoryGroup))(|(sAMAccountName=$($CollegeUsername))))"
+    $SearchResult = $DSSearcher.FindOne()
+    return $SearchResult
+}
+#>
+
+<#
+User Properties available in LDAP queries:
+msexchpoliciesincluded
+company
+sidhistory
+badpasswordtime
+msexchwhenmailboxcreated
+distinguishedname
+msds-authenticatedatdc
+countrycode
+lastlogoff
+msexchblockedsendershash
+terminalserver
+msexchtextmessagingstate
+userparameters
+targetaddress
+instancetype
+msexchversion
+replicatedobjectversion
+primarygroupid
+telephonenumber
+msexchumdtmfmap
+replicationsignature
+whenchanged
+displayname
+proxyaddresses
+protocolsettings
+mapirecipient
+extensionattribute1
+mstsmanagingls
+usnchanged
+garbagecollperiod
+msexchalobjectversion
+usncreated
+msexchmailboxguid
+msexchadcglobalnames
+badpwdcount
+legacyexchangedn
+msexchrecipienttypedetails
+employeenumber
+useraccountcontrol
+msexchhidefromaddresslists
+whencreated
+msds-externaldirectoryobjectid
+adspath
+initials
+department
+comment
+msexchmobilemailboxflags
+mstslicenseversion2
+samaccountname
+mailnickname
+codepage
+objectcategory
+objectsid
+msexchsafesendershash
+memberof
+msexchrecipientdisplaytype
+mstsexpiredate
+objectclass
+logoncount
+mstslicenseversion3
+msexchuseraccountcontrol
+pwdlastset
+title
+msexchremoterecipienttype
+dlmemdefault
+lastlogon
+mstslicenseversion
+sn
+samaccounttype
+extensionattribute2
+mail
+msnpallowdialin
+usercertificate
+showinaddressbook
+physicaldeliveryofficename
+userprincipalname
+cn
+name
+givenname
+accountexpires
+lockouttime
+objectguid
+dscorepropagationdata
+lastlogontimestamp
+textencodedoraddress
+employeeid
+
+#>
 
 # ## ### #### ##### ###### ####### ########################################################################################
 # ## ### #### ##### ###### ####### ########################################################################################
