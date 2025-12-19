@@ -95,6 +95,21 @@ function New-PasswordText {
 }
 Set-Alias -Name Get-NewPasswordText -Value New-PasswordText
 
+function Set-FileTimeToNow {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Path
+    )
+    process {        
+        if (Test-Path -Path $Path) {
+            (Get-Item -Path $Path).LastWriteTime = (Get-Date)
+        } 
+        else {
+            New-Item -Path $Path -ItemType File | Out-Null
+        }
+    }
+}
+Set-Alias -Name touch -Value Set-FileTimeToNow
 # ## ### #### ##### ###### ####### ########################################################################################
 # ## ### #### ##### ###### ####### ########################################################################################
 # ## ### #### ##### ###### ####### ########################################################################################
@@ -218,7 +233,7 @@ function Add-LogEntry {
     .SYNOPSIS
         Adds a timestamped log entry to the globally configured log file
     .DESCRIPTION
-        Adds a timestamped log entry to the globally configured log file. Also prints to screen when verbose.
+        Adds a timestamped log entry to the globally configured log file. Also prints to screen based on verbosity.
     .PARAMETER LogMsg
         message to be logged
     #>
@@ -443,7 +458,7 @@ function Get-UserInfoFromLDAP {
     )
     $DSEntry = New-Object System.DirectoryServices.DirectoryEntry("LDAP://$($DsDomain)/$($DsLdapPath)")
     $DSSearcher = New-Object System.DirectoryServices.DirectorySearcher($DSEntry)
-    $DSSearcher.PropertiesToLoad.AddRange(@("samAccountName","displayName","givenName","sn","title","userprincipalname","mail","userAccountControl","memberof"))
+    $DSSearcher.PropertiesToLoad.AddRange(@("samAccountName","displayName","givenName","sn","title","userprincipalname","mail","userAccountControl","memberof","department"))
     $DSSearcher.Filter = "(&(objectClass=user)(samaccountname=$($CollegeUsername)))"
     $SearchResult = $DSSearcher.FindOne()
     return $SearchResult.Properties

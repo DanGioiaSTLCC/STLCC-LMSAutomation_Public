@@ -487,6 +487,32 @@ function Send-CanvasSisFile {
     return $UploadResult
 }
 
+function Invoke-CanvasFileDownload {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Uri,    
+        
+        [Parameter(Mandatory = $true)]
+        [Alias("OutputFilePath","Outputfile","OutFilePath")]
+        [string]$OutFile,
+        
+        [Parameter(Mandatory = $true)]
+        [string]$TokenFilePath
+    )
+    begin {
+        $WebRequestParameters = @{
+            Authentication = 'Bearer'
+            Token = (Get-CanvasTokenStringSecured $TokenFilePath)
+            Uri = $Uri
+            OutFile = $OutFile
+        }
+    }   
+    process {
+        Invoke-WebRequest @WebRequestParameters
+    }
+}
+
 function Send-CanvasOutcomeFile {
     <#
     .Synopsis
@@ -552,12 +578,12 @@ function New-CanvasTokenFile {
     $NewPasswordFilePath = Read-Host -Prompt "Enter or paste path for the new token file"
     Write-Host "Saving token via secure string to $NewPasswordFilePath"
      # remove the extra parameters from get-credential on older powershell
-     if ( ($PSVersionTable.PsVersion.Major) -ge 3) {
-         (get-credential -UserName "Token Saver" -Message "Only the password field is required.").password | convertFrom-SecureString | set-content $NewPasswordFilePath
-     }
+    if ( ($PSVersionTable.PsVersion.Major) -ge 3) {
+        (get-credential -UserName "Token Saver" -Message "Only the password field is required.").password | convertFrom-SecureString | set-content $NewPasswordFilePath
+    }
     else {
-         (get-credential).password | convertFrom-SecureString | set-content $NewPasswordFilePath
-     }
+        (get-credential).password | convertFrom-SecureString | set-content $NewPasswordFilePath
+    }
  
     Write-Host "Credential operation complete."
  }
@@ -3055,14 +3081,7 @@ function Get-CanvasCourseAnnouncements {
     )
     # format the api url
     $ApiUrl = "https://{0}/api/v1/courses/{1}/discussion_topics?only_announcements=true" -f $global:CanvasSite, $CourseId
-    
-    <# configure upload parameters
-    $DataParams = @{
-        CanvasApiUrl = $ApiUrl2
-        PerPage = 99
-        TokenFilePath = $TokenFilePath
-    }#>
-    
+       
     # $ListResult = Get-CanvasItemListWithVars @DataParams
     $ListResult = Get-CanvasItemListFlattened -ApiUrl $ApiUrl -ResultsPerCall 99 -TokenFilePath $tknPath
     $ResultData = @{
@@ -4197,6 +4216,29 @@ function Export-CanvasSisUserFile {
     }
     Add-LogEntry "$($NumEnabled.ToString()) $($StatusSis) members configured"
     Add-LogEntry "$($StatusSis) user file generation finished."
+}
+
+function Find-CanvasCourse {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$SearchTerm
+        
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # format the api url
+    $ApiUrl = "https://{0}/api/v1/search/all_courses?search={1}" -f $global:CanvasSite, $SearchTerm
+    
+    # configure upload parameters
+    $NewDataParams = @{
+        CanvasApiUrl = $ApiUrl
+        TokenFilePath = $TokenFilePath
+    }
+    # send the update
+    $NewItemResult = Get-CanvasItemListFlattened @NewDataParams
+    return $NewItemResult
 }
 
 <#
