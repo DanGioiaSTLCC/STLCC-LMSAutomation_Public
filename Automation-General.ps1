@@ -436,7 +436,7 @@ function Get-UserInfoFromLDAP {
     Still depends on Windows libraries. Not a cross-platform function
     useraccountcontrol: 512=enabled, 514=disabled
 
-    .PARAMETER CollegeUsername
+    .PARAMETER DsUsername
     username to lookup in AD
 
     .PARAMETER DsDomain
@@ -448,7 +448,8 @@ function Get-UserInfoFromLDAP {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory)]
-        [string]$CollegeUsername,
+        [Alias("CollegeUsername")]
+        [string]$DsUsername,
 
         [Parameter(Mandatory=$false)]
         [string]$DsDomain="$($global:DirectoryDomain)",
@@ -458,18 +459,18 @@ function Get-UserInfoFromLDAP {
     )
     $DSEntry = New-Object System.DirectoryServices.DirectoryEntry("LDAP://$($DsDomain)/$($DsLdapPath)")
     $DSSearcher = New-Object System.DirectoryServices.DirectorySearcher($DSEntry)
-    $DSSearcher.PropertiesToLoad.AddRange(@("samAccountName","displayName","givenName","sn","title","userprincipalname","mail","userAccountControl","memberof","department"))
-    $DSSearcher.Filter = "(&(objectClass=user)(samaccountname=$($CollegeUsername)))"
+    $DSSearcher.PropertiesToLoad.AddRange(@("samAccountName","displayName","givenName","sn","title","userprincipalname","mail","userAccountControl","memberof","department","distinguishedname"))
+    $DSSearcher.Filter = "(&(objectClass=user)(samaccountname=$($DsUsername)))"
     $SearchResult = $DSSearcher.FindOne()
     return $SearchResult.Properties
 }
 Set-Alias -Name Get-CollegeUserInfoFromLDAP -Value Get-UserInfoFromLDAP
-<#
+
 function Get-DirectoryGroupMembershipFromLDAP {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory)]
-        [string]$DirectoryGroupCn,
+        [string]$DirectoryGroupName,
 
         [Parameter(Mandatory=$false)]
         [string]$DsDomain="$($global:DirectoryDomain)",
@@ -477,13 +478,10 @@ function Get-DirectoryGroupMembershipFromLDAP {
         [Parameter(Mandatory=$false)]
         [string]$DsLdapPath="$($global:DirectoryUserPath)"
     )
-    $DSEntry = New-Object System.DirectoryServices.DirectoryEntry("LDAP://$($DsDomain)")
-    $DSSearcher = New-Object System.DirectoryServices.DirectorySearcher($DSEntry)
-    $DSSearcher.Filter = "(&(objectCategory=user)(memberOf=$($DirectoryGroupCn)))"
-    $SearchResult = $DSSearcher.FindAll()
-    return $SearchResult
+    $GroupInfo = Get-DirectoryGroupInformation $DirectoryGroupName
+    return $GroupInfo.Properties.member
 }
-#>
+
 function Get-DirectoryGroupInformation {
     [CmdletBinding()]
     param (
@@ -503,12 +501,11 @@ function Get-DirectoryGroupInformation {
     return $SearchResult    
 }
 
-<#
 function Test-DirectoryGroupMembership {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory)]
-        [string]$CollegeUsername,
+        [string]$DsUsername,
 
         [Parameter(Mandatory)]
         [string]$DirectoryGroup,
@@ -519,13 +516,19 @@ function Test-DirectoryGroupMembership {
         [Parameter(Mandatory=$false)]
         [string]$DsLdapPath="$($global:DirectoryUserPath)"
     )
-    $DSEntry = New-Object System.DirectoryServices.DirectoryEntry("LDAP://$($DsDomain)")
-    $DSSearcher = New-Object System.DirectoryServices.DirectorySearcher($DSEntry)
-    $DSSearcher.Filter = "(&(objectClass=user)(memberOf:1.2.840.113556.1.4.1941:=$($DirectoryGroup))(|(sAMAccountName=$($CollegeUsername))))"
-    $SearchResult = $DSSearcher.FindOne()
-    return $SearchResult
+    # !! only tests direct membership, does not check nested groups
+    [bool]$TestResult = $false
+    
+    # retrieve user and group info from the directory
+    $UserInfo = Get-UserInfoFromLDAP -DsUsername $DsUsername
+    $GroupInfo = Get-DirectoryGroupInformation -DirectoryGroupName $DirectoryGroup
+
+    # check the list
+    if ($GroupInfo.Properties.distinguishedname -in $UserInfo.memberof){
+        $TestResult = $true
+    }
+    return $TestResult
 }
-#>
 
 <#
 User Properties available in LDAP queries:
