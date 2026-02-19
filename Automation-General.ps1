@@ -32,7 +32,7 @@ function Get-UrlEncodedString {
         [Parameter(Mandatory=$true)]
         [string]$StringText
     )
-    $UrlText = [System.Web.HttpUtility]::UrlEncode($StringText).Replace(".", "%2E").Replace("/","%2F")
+    [string]$UrlText = [System.Web.HttpUtility]::UrlPathEncode($StringText)
     return $UrlText
 }
 
@@ -110,6 +110,24 @@ function Set-FileTimeToNow {
     }
 }
 Set-Alias -Name touch -Value Set-FileTimeToNow
+
+function Add-UrlQueryParameter {
+    param(
+        [Parameter(Mandatory)]
+        [string]$ExistingUrl
+
+        ,[Parameter(Mandatory)]
+        [string]$QueryAddition
+    )
+    [string]$ReturnUrl = $ExistingUrl
+    if ($ReturnUrl.ToCharArray() -contains '?'){
+        $ReturnUrl = $ReturnUrl + "&" + $QueryAddition
+    }
+    else {
+        $ReturnUrl = $ReturnUrl + "?" + $QueryAddition
+    }
+    return $ReturnUrl
+}
 # ## ### #### ##### ###### ####### ########################################################################################
 # ## ### #### ##### ###### ####### ########################################################################################
 # ## ### #### ##### ###### ####### ########################################################################################
