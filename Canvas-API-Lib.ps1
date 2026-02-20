@@ -21,11 +21,11 @@ sis_section_id
 sis_term_id
 sis_user_id
 #>
+Add-Type -AssemblyName System.Web
 
 # include the general functions, specifically for date stuff and string hashing
-. $PSScriptRoot\Automation-General.ps1
+Import-Module $PSScriptRoot\Automation-General.ps1
 
-Add-Type -AssemblyName System.Web
 # not sure if PowerShell or Windows issue but not setting TLS can cause issues randomly by using default so always set it
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls13
 
@@ -366,7 +366,7 @@ function Get-CanvasItemListFlattened {
         $OldParams
     )
     $TokenString = Get-CanvasTokenStringSecured -KeeperFile $TokenFilePath
-    $allResults = @()
+    $AllResults = @()
     $LoopMax = $MaxApiCalls
     $LoopI = 1
     do {
@@ -385,17 +385,16 @@ function Get-CanvasItemListFlattened {
             }
         }
 
-        $response = Invoke-RestMethod -Uri $ApiUrl -Authentication Bearer -Token $TokenString -Method Get -ResponseHeadersVariable headersr
+        $response = Invoke-RestMethod -Uri $ApiUrl -Authentication Bearer -Token $TokenString -Method Get -ResponseHeadersVariable HeadersResp
         
         # Append retrieved pages to the result list
-        $allResults += $response
+        $AllResults += $response
         
         # Check for pagination link in response headers
-        $linkHeader = $headersr.Link
-        if($headersr.Link){
-            $HeaderLinks = $linkHeader.split(',')
+        if($HeadersResp.Link){
+            $HeaderLinks = $HeadersResp.Link.split(',')
             # hash table to store header links
-            $htHL = @{}
+            $HeaderLinkDetails = @{}
             foreach ($HeaderLink in $HeaderLinks){
                 <# example link header: 
                     <https://domain/api_route?page=bookmark:GUID&per_page=20>; rel="next",
@@ -405,13 +404,13 @@ function Get-CanvasItemListFlattened {
                 $parts = $HeaderLink.split('; ');
                 $partsKey = $parts[1].replace('rel=','').replace('"','')
                 $partsValue = $parts[0].replace('<','').replace('>','')
-                $htHL.Add($partsKey,$partsValue);
+                $HeaderLinkDetails.Add($partsKey,$partsValue);
             }
-            $ApiUrl = $htHL['next']
+            $ApiUrl = $HeaderLinkDetails['next']
             # Write-Verbose "Next: $($ApiUrl)"
         }
-    } while ($ApiUrl -and ($LoopI -le $LoopMax) -and $headersr.Link)
-    return $allResults
+    } while ($ApiUrl -and ($LoopI -le $LoopMax) -and $HeadersResp.Link)
+    return $AllResults
 }
 
 function Send-CanvasSisFile {
@@ -521,7 +520,7 @@ function Send-CanvasOutcomeFile {
     .Description
     upload outcomes csv files to Canvas.
 
-    for a full reference of formatting the CSV files see https://canvas.instructure.com/doc/api/file.outcomes_csv.html
+    for a full reference of formatting the CSV files see https://developerdocs.instructure.com/services/canvas/outcomes/file.outcomes_csv
     
     .Parameter UploadFilePath
     full file path of the file to be uploaded
@@ -1048,7 +1047,10 @@ function Get-CanvasCourseMemberships {
         [int32]$MaxResults = 150,
 
         [Parameter(Mandatory=$false)]
-        [string]$Role=""
+        [string]$Role="",
+
+        [Parameter(Mandatory=$false)]
+        [string]$PersonId=""
     )
     # build the URL
     $CourseUsersUrl = "https://{0}/api/v1/courses/{1}/enrollments" -f $global:CanvasSite,$CourseId
@@ -1084,7 +1086,12 @@ function Get-CanvasCourseMemberships {
                 $CourseRole = Get-UrlEncodedString $Role
             }
         }
-        $CourseUsersUrl = $CourseUsersUrl + "?role=" + $CourseRole
+        $UrlAddition = "role=$($CourseRole)"
+        $CourseUsersUrl = Add-UrlQueryParameter -ExistingUrl $CourseUsersUrl -QueryAddition $UrlAddition
+    }
+    if ($PersonId -ne ""){
+        $UrlAddition = "user_id=$($PersonId)"
+        $CourseUsersUrl = Add-UrlQueryParameter -ExistingUrl $CourseUsersUrl -QueryAddition $UrlAddition
     }
 
     Get-CanvasItemListFlattened -ApiUrl $CourseUsersUrl -ResultsPerCall 75 -TokenFilePath $tknPath
@@ -1114,12 +1121,18 @@ function Get-CanvasUserMemberships {
         [string]$TokenFilePath,
         
         [Parameter(Mandatory=$false)]
-        [bool]$InactiveList=$false
+        [bool]$InactiveList=$false,
+
+        [Parameter(Mandatory=$false)]
+        [string]$CanvasTermSisId=""
     )
     # build the URL
     $CourseUsersUrl = "https://{0}/api/v1/users/{1}/enrollments" -f $global:CanvasSite,$CanvasUser
     if ($InactiveList){
-        $CourseUsersUrl = $CourseUsersUrl + "?state=inactive"
+        $CourseUsersUrl = Add-UrlQueryParameter -ExistingUrl $CourseUsersUrl -QueryAddition "state=inactive"
+    }
+    if ($CanvasTermSisId -ne "") {
+        $CourseUsersUrl = Add-UrlQueryParameter -ExistingUrl $CourseUsersUrl -QueryAddition "enrollment_term_id=sis_term_id:$($CanvasTermSisId)"
     }
     # construct the parameters
     $MembershipListParams = @{
@@ -1128,7 +1141,7 @@ function Get-CanvasUserMemberships {
         PerPage = 100
     }
     # call the requestor
-    Get-CanvasItemList @MembershipListParams    
+    Get-CanvasItemListFlattened @MembershipListParams
 }
 Set-Alias -Name Get-CanvasUserEnrollments -Value Get-CanvasUserMemberships
 
@@ -1165,11 +1178,14 @@ function Set-CanvasCourseMembershipStatus {
     $EnrollmentUpdateURl = ""
     $EnrTask = @{}
     $EnrId = ""
-    # check that the enrollment exists, get id if it does
-    $CourseEnrs = Get-CanvasCourseMemberships -CanvasCourse $CanvasCourse -TokenFilePath $TokenFilePath
+    # Retrieve User Information Details
+    $UserInfo = Get-CanvasUserInfo -CanvasUserId $CanvasUser -TokenFilePath $TokenFilePath
     
-    $UserEnr = $CourseEnrs | Where-Object{$_.sis_user_id -eq $CanvasUser.Replace('sis_user_id:','')}
-    write-host $UserEnr.count.ToString()
+    # check that the enrollment exists, get id if it does
+    $CourseEnrs = Get-CanvasCourseMemberships -CanvasCourse $CanvasCourse -TokenFilePath $TokenFilePath -PersonId $UserInfo.id
+    
+    $UserEnr = $CourseEnrs | Where-Object{$_.user_id -eq $UserInfo.id}
+    Write-Host $UserEnr.count.ToString()
     
     # make sure there is only one result, grab the ID
     if ($UserEnr.count -eq 1){
@@ -1719,23 +1735,24 @@ function Get-CanvasCourseModules {
         [Parameter(Mandatory=$false)]
         [string]$SearchTerm=""
     )
-    
-    # build sort and search
-    $SearchOptions = ""
-    if ($SearchTerm -ne ""){
-        $SearchTerm = Get-UrlEncodedString $SearchTerm
-        $SearchOptions += "?search_term=$SearchTerm"
-    }
-    
+
     # build the URL
     $CourseModulesUrl = "https://{0}/api/v1/courses/{1}/modules" -f $global:CanvasSite,$CanvasCourse
+    
+    # build search
+    if ($SearchTerm -ne ""){
+        $SearchQry = Get-UrlEncodedString $SearchTerm
+        $SearchQry = "search_term=$($SearchQry)"
+        $CourseModulesUrl = Add-UrlQueryParameter $CourseModulesUrl $SearchQry
+    }
+    
     # construct the parameters
     $ModuleListParams = @{
         "CanvasApiUrl" = $CourseModulesUrl
         "TokenFilePath" = $TokenFilePath
-        PerPage = 100
     }
-    # call the requestor
+    
+    # retrieve
     Get-CanvasItemListFlattened @ModuleListParams
 }
 
@@ -4217,7 +4234,7 @@ function Export-CanvasSisUserFile {
     Add-LogEntry "$($NumEnabled.ToString()) $($StatusSis) members configured"
     Add-LogEntry "$($StatusSis) user file generation finished."
 }
-
+<#
 function Find-CanvasCourse {
     [CmdletBinding()]
     param (
@@ -4240,7 +4257,7 @@ function Find-CanvasCourse {
     $NewItemResult = Get-CanvasItemListFlattened @NewDataParams
     return $NewItemResult
 }
-
+#>
 <#
 function new-genericfunction {
     [CmdletBinding()]
