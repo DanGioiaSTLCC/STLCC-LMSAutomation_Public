@@ -2,7 +2,7 @@
 .SYNOPSIS 
 Canvas REST API functions as well as integration upload
 All functions tested against PowerShell 7 only
-Most if not all functions included assume the token is or will be stored in a secure string file
+Most if not all functions included assume the token is stored in a secure string file
 Set VerbosePreference equal to Continue to read details of operations
 
 .DESCRIPTION
@@ -23,13 +23,13 @@ sis_user_id
 #>
 Add-Type -AssemblyName System.Web
 
-# include the general functions, specifically for date stuff and string hashing
+# include the general functions, specifically for date and string functions
 Import-Module $PSScriptRoot\Automation-General.ps1
 
 # not sure if PowerShell or Windows issue but not setting TLS can cause issues randomly by using default so always set it
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls13
 
-# setup global stuff
+# global variables
 $global:CanvasSite = "institution.beta.instructure.com"
 $global:LorSite = "lor.instructure.com"
 $global:CourseRoleIds = @()
@@ -219,110 +219,6 @@ function Get-CanvasItemWithVars {
 }
 
 function Get-CanvasItemList {
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory=$true)]
-        [string]$CanvasApiUrl,
-
-        [Parameter(Mandatory=$true)]
-        [string]$TokenFilePath,
-
-        [Parameter(Mandatory=$false)]
-        [int32]$PerPage=10,
-
-        [Parameter(Mandatory=$false)]
-        [int32]$MaxResults=1000
-    )
-    # set maximum "next" link follows
-    $MaxPages = 100
-    # determine page size for results
-    if (($PerPage -ne 10) -or ($MaxResults -ne 1000)){
-        # check if remainder exists max/per, set pages accordingly
-        if (0 -eq $MaxResults % $PerPage){
-            $MaxPages = $MaxResults / $PerPage
-        }
-        else {
-            $MaxPages = [int]($MaxResults / $PerPage) + 1
-        }
-    }
-    # if paging specified add it the url
-    if ($PerPage -ne 10){
-        if (($CanvasApiUrl.Contains("per_page")) -eq $false){
-            # check if there are already query parameters
-            if ($CanvasApiUrl.Contains("`?") -eq $false){
-                $CanvasApiUrl += "?per_page={0}" -f $PerPage.ToString()
-            }
-            else {
-                $CanvasApiUrl += "&per_page={0}" -f $PerPage.ToString()
-            }
-        }
-    }
-    Write-Verbose "original URL is $CanvasApiUrl"
-    $TokenString = Get-CanvasTokenStringSecured -KeeperFile $TokenFilePath
-    # add follow rel link for the command to automatically follw the next result set link
-    $result = Invoke-RestMethod -Method GET -Authentication Bearer -Token $TokenString -Uri $CanvasApiUrl -FollowRelLink -MaximumFollowRelLink $MaxPages
-    # clear token data
-    $TokenString = $null
-    Remove-Variable -Name "TokenString"    
-    return $result
-}
-
-function Get-CanvasItemListWithVars {
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory=$true)]
-        [string]$CanvasApiUrl,
-
-        [Parameter(Mandatory=$true)]
-        [string]$TokenFilePath,
-
-        [Parameter(Mandatory=$false)]
-        [int32]$PerPage=10,
-
-        [Parameter(Mandatory=$false)]
-        [int32]$MaxResults=1000
-    )
-    # set maximum "next" link follows
-    $MaxPages = 100
-    # determine page size for results
-    if (($PerPage -ne 10) -or ($MaxResults -ne 1000)){
-        # check if remainder exists max/per, set pages accordingly
-        if (0 -eq $MaxResults % $PerPage){
-            $MaxPages = $MaxResults / $PerPage
-        }
-        else {
-            $MaxPages = [int]($MaxResults / $PerPage) + 1
-        }
-    }
-    # if paging specified add it the url
-    if ($PerPage -ne 10){
-        if (($CanvasApiUrl.Contains("per_page")) -eq $false){
-            # check if there are already query parameters
-            if (($CanvasApiUrl.Contains("`?")) -eq $false){
-                $CanvasApiUrl += "?per_page={0}" -f $PerPage.ToString()
-            }
-            else {
-                $CanvasApiUrl += "&per_page={0}" -f $PerPage.ToString()
-            }
-        }
-    }
-    Write-Verbose "original URL is $CanvasApiUrl"
-
-    $TokenString = Get-CanvasTokenStringSecured -KeeperFile $TokenFilePath
-    # add follow rel link for the command to automatically follw the next result set link
-    $result = Invoke-RestMethod -Method GET -Authentication Bearer -Token $TokenString -Uri $CanvasApiUrl -FollowRelLink -MaximumFollowRelLink $MaxPages -ResponseHeadersVariable ResponseHeaders -StatusCodeVariable StatusCodeInfo -SkipHttpErrorCheck
-    # clear token data
-    $TokenString = $null
-    Remove-Variable -Name "TokenString"
-    $ReturnData = @{
-        result = $result
-        StatusCode = $StatusCodeInfo
-        Headers = $ResponseHeaders
-    }
-    return $ReturnData
-}
-
-function Get-CanvasItemListFlattened {
     <#
     .SYNOPSIS
     Returns an unpaginated list when multiple API calls are required to retrieve all items
@@ -330,7 +226,91 @@ function Get-CanvasItemListFlattened {
     .DESCRIPTION
     Returns an unpaginated list when multiple API calls are required to retrieve all items. 
     Uses custom header parsing to determine next page when handling paginated results and 
-    places all results into a "flattened" list. This obviates dealing with the paginated 
+    places all results into a "flattened" list. This eliminates dealing with the paginated 
+    groups of results returned by using the FollowRelLink option of Invoke-RestMethod.
+
+    .PARAMETER ApiUrl
+    full API route including protocol, domain and path
+
+    .PARAMETER TokenFilePath
+    path of the file containing the token text stored as a secure string
+
+    .PARAMETER ResultsPerCall
+    page size of results to return for each API call
+
+    .PARAMETER MaxApiCalls
+    maximum number of times to allow results API calls
+    #>
+    param (
+        [Alias("CanvasApiUrl")]
+        [Parameter(Mandatory)]
+        [string]$ApiUrl
+        
+        ,[Parameter(Mandatory)]
+        [string]$TokenFilePath
+        
+        ,[Alias("PerPage")]
+        [Parameter(Mandatory=$false)]
+        [int32]$ResultsPerCall=50
+
+        ,[Parameter(Mandatory=$false)]
+        [int32]$MaxApiCalls=20
+
+        ,
+        [Alias("MaxResults")]
+        [Parameter(DontShow)]
+        $OldParams
+    )
+    $TokenString = Get-CanvasTokenStringSecured -KeeperFile $TokenFilePath
+    $AllResults = @()
+    $LoopMax = $MaxApiCalls
+    $LoopI = 1
+    do {
+        $LoopI ++
+        
+        # update API url with result size per page
+        if ($ResultsPerCall -ne 10){
+            Add-UrlQueryParameter -ExistingUrl $ApiUrl -QueryAddition ("?per_page={0}" -f $ResultsPerCall.ToString())
+        }
+
+        $response = Invoke-RestMethod -Uri $ApiUrl -Authentication Bearer -Token $TokenString -Method Get -ResponseHeadersVariable HeadersResp
+        
+        # Append retrieved pages to the result list
+        $AllResults += $response
+        
+        # Check for pagination link in response headers
+        if($HeadersResp.Link){
+            $HeaderLinks = $HeadersResp.Link.split(',')
+            # hash table to store header links
+            $HeaderLinkDetails = @{}
+            foreach ($HeaderLink in $HeaderLinks){
+                <# example link header: 
+                    <https://domain/api_route?page=bookmark:GUID&per_page=20>; rel="next",
+                    <https://domain/api_route?page=bookmark:GUID&per_page=20>; rel="current",
+                    <https://domain/api_route?page=first&per_page=20>; rel="first
+                #>
+                $parts = $HeaderLink.split('; ');
+                $partsKey = $parts[1].replace('rel=','').replace('"','')
+                $partsValue = $parts[0].replace('<','').replace('>','')
+                $HeaderLinkDetails.Add($partsKey,$partsValue);
+            }
+            $ApiUrl = $HeaderLinkDetails['next']
+            # Write-Verbose "Next: $($ApiUrl)"
+        }
+    } while ($ApiUrl -and ($LoopI -le $LoopMax) -and $HeadersResp.Link)
+    return $AllResults
+}
+Set-Alias -Name Get-CanvasItemListFlattened -Value Get-CanvasItemList
+
+function Get-CanvasItemListWithVars {
+    <#
+    .SYNOPSIS
+    Returns an unpaginated list when multiple API calls are required to retrieve all items
+
+    .DESCRIPTION
+    Returns an unpaginated list when multiple API calls are required to retrieve all items. 
+    Uses custom header parsing to determine next page when handling paginated results and 
+    places all results into a "flattened" list. This eliminates dealing with the paginated 
     groups of results returned by using the FollowRelLink option of Invoke-RestMethod.
 
     .PARAMETER ApiUrl
@@ -385,14 +365,14 @@ function Get-CanvasItemListFlattened {
             }
         }
 
-        $response = Invoke-RestMethod -Uri $ApiUrl -Authentication Bearer -Token $TokenString -Method Get -ResponseHeadersVariable HeadersResp
+        $response = Invoke-RestMethod -Uri $ApiUrl -Authentication Bearer -Token $TokenString -Method Get -ResponseHeadersVariable ResponseHeaders -StatusCodeVariable StatusCodeInfo
         
         # Append retrieved pages to the result list
         $AllResults += $response
         
         # Check for pagination link in response headers
-        if($HeadersResp.Link){
-            $HeaderLinks = $HeadersResp.Link.split(',')
+        if($ResponseHeaders.Link){
+            $HeaderLinks = $ResponseHeaders.Link.split(',')
             # hash table to store header links
             $HeaderLinkDetails = @{}
             foreach ($HeaderLink in $HeaderLinks){
@@ -409,9 +389,19 @@ function Get-CanvasItemListFlattened {
             $ApiUrl = $HeaderLinkDetails['next']
             # Write-Verbose "Next: $($ApiUrl)"
         }
-    } while ($ApiUrl -and ($LoopI -le $LoopMax) -and $HeadersResp.Link)
-    return $AllResults
+    } while ($ApiUrl -and ($LoopI -le $LoopMax) -and $ResponseHeaders.Link)
+    # package return data with http info
+    $ReturnData = [PSCustomObject]@{
+        Results = $AllResults
+        StatusCode = $StatusCodeInfo
+        Headers = $ResponseHeaders
+    }
+    # alias the Results property for backward compatibility
+    $ReturnData | Add-Member -MemberType AliasProperty -Name 'result' -Value Results
+
+    return $ReturnData
 }
+Set-Alias -Name Get-CanvasItemListFlattenedWithVars -Value Get-CanvasItemListWithVars
 
 function Send-CanvasSisFile {
     <#
@@ -856,7 +846,6 @@ function Get-CanvasCourseSections {
         [string]$TokenFilePath
     )
     $CourseUrl = "https://{0}/api/v1/courses/{1}/sections" -f $global:CanvasSite,$CourseId
-    # $CourseData = Get-CanvasItemList -CanvasApiUrl $CourseUrl -PerPage 100 -TokenFilePath $TokenFilePath
     $CourseData = Get-CanvasItemListFlattened -ApiUrl $CourseUrl -ResultsPerCall 100 -TokenFilePath $TokenFilePath
     return $CourseData    
 }
@@ -1366,7 +1355,6 @@ function Get-CanvasCourseExports {
         [string]$TokenFilePath
     )
     $ExportListUrl = "https://{0}/api/v1/courses/{1}/content_exports" -f $global:CanvasSite,$CourseId
-    # $result = Get-CanvasItemList -CanvasApiUrl $ExportListUrl -TokenFilePath $TokenFilePath
     $result = Get-CanvasItemListFlattened -ApiUrl $ExportListUrl -TokenFilePath $TokenFilePath
     return $result
 }
@@ -2873,7 +2861,7 @@ function Get-CanvasCourseAssignmentGroups {
         "TokenFilePath" = $TokenFilePath
     }
     # call the requestor
-    Get-CanvasItemList @AsgnGroupListParams
+    Get-CanvasItemListFlattened @AsgnGroupListParams
 }
 
 function Remove-CanvasCourseAssignmentGroup {
@@ -3027,7 +3015,7 @@ function Get-CanvasRoles {
         [string]$AccountId="1"
     )
     $RoleUrl = "https://{0}/api/v1/accounts/{1}/roles" -f $global:CanvasSite,$AccountId
-    $RoleList = Get-CanvasItemList -CanvasApiUrl $RoleUrl -TokenFilePath $TokenFilePath -PerPage 50
+    $RoleList = Get-CanvasItemListFlattened -CanvasApiUrl $RoleUrl -TokenFilePath $TokenFilePath -PerPage 50
     return $RoleList
 }
 
@@ -3082,7 +3070,7 @@ function Get-CanvasContentMigrationsForCourse {
         TokenFilePath = $TokenFilePath 
         PerPage = 50
     }
-    $MigList = Get-CanvasItemList @MigListParams
+    $MigList = Get-CanvasItemListFlattened @MigListParams
     return $MigList
 }
 
@@ -3099,7 +3087,6 @@ function Get-CanvasCourseAnnouncements {
     # format the api url
     $ApiUrl = "https://{0}/api/v1/courses/{1}/discussion_topics?only_announcements=true" -f $global:CanvasSite, $CourseId
        
-    # $ListResult = Get-CanvasItemListWithVars @DataParams
     $ListResult = Get-CanvasItemListFlattened -ApiUrl $ApiUrl -ResultsPerCall 99 -TokenFilePath $tknPath
     $ResultData = @{
         result = $ListResult
@@ -3182,7 +3169,6 @@ function Get-CanvasCustomGradeColumns {
     $ApiUrl = "https://{0}/api/v1/courses/{1}/custom_gradebook_columns" -f $global:CanvasSite, $CourseId
 
     # send the request
-    # $ItemResult = Get-CanvasItemListWithVars -CanvasApiUrl $ApiUrl -TokenFilePath $TokenFilePath
     $GradeColumns = Get-CanvasItemListFlattened -ApiUrl $ApiUrl -TokenFilePath $tknPath
     $GradeColumnsData = @{
         result = $GradeColumns
@@ -3347,7 +3333,6 @@ function Get-CanvasModuleItems {
         [string]$TokenFilePath
     )
     $ApiUrl = "https://{0}/api/v1/courses/{1}/modules/{2}/items" -f $global:CanvasSite, $CourseId, $ModuleId
-    # $ModuleItems = Get-CanvasItemList -CanvasApiUrl $ApiUrl -TokenFilePath $TokenFilePath -PerPage 99
     $ModuleItemList = Get-CanvasItemListFlattened -ApiUrl $ApiUrl -TokenFilePath $TokenFilePath
     return $ModuleItemList
 }
@@ -4235,30 +4220,6 @@ function Export-CanvasSisUserFile {
     Add-LogEntry "$($StatusSis) user file generation finished."
 }
 <#
-function Find-CanvasCourse {
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory=$true)]
-        [string]$SearchTerm
-        
-        # path of the file containing the token text stored as a secure string
-        ,[Parameter(Mandatory=$true)]
-        [string]$TokenFilePath
-    )
-    # format the api url
-    $ApiUrl = "https://{0}/api/v1/search/all_courses?search={1}" -f $global:CanvasSite, $SearchTerm
-    
-    # configure upload parameters
-    $NewDataParams = @{
-        CanvasApiUrl = $ApiUrl
-        TokenFilePath = $TokenFilePath
-    }
-    # send the update
-    $NewItemResult = Get-CanvasItemListFlattened @NewDataParams
-    return $NewItemResult
-}
-#>
-<#
 function new-genericfunction {
     [CmdletBinding()]
     param (
@@ -4302,90 +4263,115 @@ function new-genericfunction {
 
 <#
 Available Reports:
-title      : User Course Access Log
-parameters : @{start_at=; term=; enrollment_type=}
-report     : user_course_access_log_csv
-
-title      : Eportfolio Report
-parameters : @{no_enrollments=; include_deleted=}
-report     : eportfolio_report_csv
-
-title      : Grade Export
-parameters : @{enrollment_term_id=; include_deleted=}
-report     : grade_export_csv
-
-title      : Multiple Grading Periods Grade Export
-parameters : @{enrollment_term_id=}
-report     : mgp_grade_export_csv
-
-title      : Last User Access
-parameters : @{enrollment_term_id=; course_id=; include_deleted=}
-report     : last_user_access_csv
-
-title      : Last Enrollment Activity
-parameters : @{enrollment_term_id=; course_id=}
-report     : last_enrollment_activity_csv
-
-title      : Outcome Export
-parameters :
-report     : outcome_export_csv
-
-title      : Outcome Results
-parameters : @{enrollment_term_id=; order=; include_deleted=}
-report     : outcome_results_csv
-
-title      : Provisioning
-parameters : @{enrollment_term_id=; users=; accounts=; terms=; courses=; sections=; enrollments=; groups=;
-             group_categories=; group_membership=; xlist=; user_observers=; admins=; created_by_sis=;
-             include_deleted=; enrollment_filter=; enrollment_states=}
-report     : provisioning_csv
-
-title      : Recently Deleted Courses
-parameters : @{enrollment_term_id=}
-report     : recently_deleted_courses_csv
-
-title      : SIS Export
-parameters : @{enrollment_term_id=; users=; accounts=; terms=; courses=; sections=; enrollments=; groups=;
-             group_categories=; group_membership=; xlist=; user_observers=; admins=; created_by_sis=; include_deleted=}
-report     : sis_export_csv
-
-title      : Student Competency
-parameters : @{enrollment_term_id=; include_deleted=}
-report     : student_assignment_outcome_map_csv
-
-title      : Students with no submissions
-parameters : @{enrollment_term_id=; course_id=; start_at=; end_at=; include_enrollment_state=; enrollment_state=}
-report     : students_with_no_submissions_csv
-
-title      : Unpublished Courses
-parameters : @{enrollment_term_id=}
-report     : unpublished_courses_csv
-
-title      : Public Courses
-parameters : @{enrollment_term_id=}
-report     : public_courses_csv
-
 title      : Course Storage
-parameters : @{enrollment_term_id=}
 report     : course_storage_csv
-
-title      : Unused Courses
 parameters : @{enrollment_term_id=}
-report     : unused_courses_csv
 
-title      : Zero Activity
-parameters : @{enrollment_term_id=; start_at=; course_id=}
-report     : zero_activity_csv
-
-title      : User Access Tokens
-parameters : @{include_deleted=}
-report     : user_access_tokens_csv
-
-title      : LTI Report
-parameters : @{include_deleted=}
-report     : lti_report_csv
 
 title      : Developer Keys Report
-parameters :
 report     : developer_key_report_csv
+parameters :
+
+
+title      : Eportfolio Report
+report     : eportfolio_report_csv
+parameters : @{no_enrollments=; include_deleted=}
+
+
+title      : Grade Export
+report     : grade_export_csv
+parameters : @{enrollment_term_id=; include_deleted=}
+
+
+title      : Last Enrollment Activity
+report     : last_enrollment_activity_csv
+parameters : @{enrollment_term_id=; course_id=}
+
+
+title      : Last User Access
+report     : last_user_access_csv
+parameters : @{enrollment_term_id=; course_id=; include_deleted=}
+
+
+title      : LTI Report
+report     : lti_report_csv
+parameters : @{include_deleted=}
+
+
+title      : Multiple Grading Periods Grade Export
+report     : mgp_grade_export_csv
+parameters : @{enrollment_term_id=}
+
+
+title      : Outcome Export
+report     : outcome_export_csv
+parameters :
+
+
+title      : Outcome Results
+report     : outcome_results_csv
+parameters : @{enrollment_term_id=; order=; include_deleted=}
+
+
+title      : Provisioning
+report     : provisioning_csv
+parameters : @{enrollment_term_id=; users=; accounts=; terms=; courses=; sections=; enrollments=; groups=; group_categories=;
+             group_membership=; xlist=; user_observers=; admins=; created_by_sis=; include_deleted=; enrollment_filter=;
+             enrollment_states=}
+
+
+title      : Public Courses
+report     : public_courses_csv
+parameters : @{enrollment_term_id=}
+
+
+title      : Recently Deleted Courses
+report     : recently_deleted_courses_csv
+parameters : @{enrollment_term_id=}
+
+
+title      : Requests Without User Agent
+report     : requests_without_user_agent
+parameters :
+
+
+title      : SIS Export
+report     : sis_export_csv
+parameters : @{enrollment_term_id=; users=; accounts=; terms=; courses=; sections=; enrollments=; groups=; group_categories=;
+             group_membership=; xlist=; user_observers=; admins=; created_by_sis=; include_deleted=}
+
+
+title      : Student Competency
+report     : student_assignment_outcome_map_csv
+parameters : @{enrollment_term_id=; include_deleted=}
+
+
+title      : Students with no submissions
+report     : students_with_no_submissions_csv
+parameters : @{enrollment_term_id=; course_id=; start_at=; end_at=; include_enrollment_state=; enrollment_state=}
+
+
+title      : Unpublished Courses
+report     : unpublished_courses_csv
+parameters : @{enrollment_term_id=}
+
+
+title      : Unused Courses
+report     : unused_courses_csv
+parameters : @{enrollment_term_id=}
+
+
+title      : User Access Tokens
+report     : user_access_tokens_csv
+parameters : @{exclude_deleted_and_expired=; include_deleted=}
+
+
+title      : User Course Access Log
+report     : user_course_access_log_csv
+parameters : @{start_at=; term=; enrollment_type=}
+
+
+title      : Zero Activity
+report     : zero_activity_csv
+parameters : @{enrollment_term_id=; start_at=; course_id=}
 #>
