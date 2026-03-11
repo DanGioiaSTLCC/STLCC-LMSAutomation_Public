@@ -270,7 +270,7 @@ function Get-CanvasItemList {
         
         # update API url with result size per page
         if ($ResultsPerCall -ne 10){
-            Add-UrlQueryParameter -ExistingUrl $ApiUrl -QueryAddition ("?per_page={0}" -f $ResultsPerCall.ToString())
+            $ApiUrl = Add-UrlQueryParameter -ExistingUrl $ApiUrl -QueryAddition ("?per_page={0}" -f $ResultsPerCall.ToString())
         }
 
         $response = Invoke-RestMethod -Uri $ApiUrl -Authentication Bearer -Token $TokenString -Method Get -ResponseHeadersVariable HeadersResp
@@ -4219,6 +4219,30 @@ function Export-CanvasSisUserFile {
     Add-LogEntry "$($NumEnabled.ToString()) $($StatusSis) members configured"
     Add-LogEntry "$($StatusSis) user file generation finished."
 }
+<#
+function Find-CanvasCourse {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$SearchTerm
+        
+        # path of the file containing the token text stored as a secure string
+        ,[Parameter(Mandatory=$true)]
+        [string]$TokenFilePath
+    )
+    # format the api url
+    $ApiUrl = "https://{0}/api/v1/search/all_courses?search={1}" -f $global:CanvasSite, $SearchTerm
+    
+    # configure upload parameters
+    $NewDataParams = @{
+        CanvasApiUrl = $ApiUrl
+        TokenFilePath = $TokenFilePath
+    }
+    # send the update
+    $NewItemResult = Get-CanvasItemListFlattened @NewDataParams
+    return $NewItemResult
+}
+#>
 <#
 function new-genericfunction {
     [CmdletBinding()]
