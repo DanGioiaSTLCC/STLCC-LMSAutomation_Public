@@ -22,7 +22,7 @@ CREATE ROLE canvasdata WITH
   NOCREATEROLE
   NOREPLICATION
   NOBYPASSRLS
-  ENCRYPTED PASSWORD 'SCRAM-SHA-256$ENCRYPTEDATA';
+  ENCRYPTED PASSWORD 'SCRAM-SHA-256$4096:encrypted=and=encoded';
 ```
 
 Create the canvas database
@@ -68,12 +68,17 @@ pg_hba.conf
 ```ini
 # TYPE  DATABASE        USER            ADDRESS                 METHOD
 
+# "local" is for Unix domain socket connections only
+local   all             all                                     peer
+
 # IPv4 local connections:
 host       all         all              127.0.0.1/32          scram-sha-256
-hostssl	   canvas      RWUser         	192.168.69.6/20       scram-sha-256
-hostssl    canvas      RUser            iprange/CIDR          scram-sha-256
-hostssl    canvas      RUser2           iprange/CIDR          scram-sha-256
+hostssl	   canvas      RWUser           IPAddress/CIDR        scram-sha-256
+hostssl    canvas      RUser1           IPAddress/CIDR        scram-sha-256
+hostssl    canvas      RUser2           IPAddress/CIDR        scram-sha-256
 
+# IPv6 local connections:
+hostssl    all         all             ::1/128                scram-sha-256
 ```
 
 # Synchronizing
@@ -125,7 +130,7 @@ Create a sync script: `nano ./dap_sync.sh`
 # configuration
 mgmtdir=$HOME
 pyEnv="$mgmtdir/dap2"
-# ## ###
+NameSpaces=("canvas" "new_quizzes")
 # ## ###
 # definitions
 # construct log file path
@@ -135,28 +140,7 @@ syncLogLocation="$mgmtdir/cd2logs/"
 syncLogFile="${syncLogLocation}canvas-cd2-${today}.log"
 
 # timestamp to use in log
-get_now() { now=$today"_"$(date +%T); }
-
-# sync database tables based on table list in a text file
-sync_tables_byfile() {
-    # friendly up the parameters
-    namespace=$1
-    tablelist=$2
-    logfile=$3
-    # start
-    get_now
-    echo "[$now] CD2 ${namepsace^^} Sync Starting ###" >> $logfile
-    # iterate through file lines
-    while read -r line; do
-        echo "[$now] Starting sync of $line ..." >> $logfile
-        dap --loglevel error --logfile $logfile syncdb --namespace $namespace --table $line
-        get_now
-        echo "[$now] Finished sync of $line" >> $logfile
-    done < $tablelist
-    # stamp end
-    get_now
-    echo "$now CD2 Canvas Sync Complete ###" >> $cd2LogFile
-}
+update_now() { now=$(date +%F_%T); }
 
 # sync database tables based on table name and command info received from dap command
 sync_tables_bydblist() {
@@ -164,32 +148,32 @@ sync_tables_bydblist() {
     namespace=$1
     refDir=$2
     logfile=$3
-    
-    # retrieve CD2 table sync info and export json data to file
-    get_now
-    echo "[$now] Starting sync of ${namespace^^} ####"
+    localonly=${4:''}
+    listoptions='--omit-record-count'
+    # if local only option specified, only list already replicated tables
+    if [[ $localonly == *"local"* ]]; then
+        listoptions = "${listoptions} --omit-not-replicated"
+    fi
+    # retrieve CD2 table sync info
+    update_now
+    echo "[$now] Starting sync of ${namespace^^} ####" >> $logfile
     echo "[$now] getting ${namespace^^} table sync status from database" >> $logfile
-    dbListFile="$refDir/tbls-${namespace}.json"
-    dbListData=$(dap --non-interactive listdb --omit-record-count --namespace $namespace)
-    echo $dbListData > $dbListFile
-    # count table info in retrieved file
-    get_now
-    echo "[$now] counting ${dbListFile}" >> $logfile
-    TableCount=$(cat $dbListFile |jq '. | length')
-    # iterate through table info and execture relevant sync command
+    dbListData=$(dap --non-interactive listdb $listoptions --namespace $namespace)
+    # count table info
+    TableCount=$(echo $dbListData | jq '. | length')
+    # iterate through table info and execute relevant sync command
     for (( i=0; i < $TableCount; i++ )); do
-        get_now
-        itemI=$(cat $dbListFile |jq  ".[${i}]")
-        tblI=$(echo $itemI|jq '.name' -r)
-        cmdI=$(echo $itemI|jq '.command' -r)
+        update_now
+        itemI=$(echo $dbListData | jq  ".[${i}]")
+        tblI=$(echo $itemI | jq '.name' -r)
+        cmdI=$(echo $itemI | jq '.command' -r)
         echo "[$now] Starting $cmdI for $tblI ..." >> $logfile
         dap --loglevel error --logfile $logfile $cmdI --namespace $namespace --table $tblI
-        get_now
+        update_now
         echo "[$now] Finished with $cmdI for $tblI" >> $logfile
     done
     echo "[$now] Finished ${namespace^^} table sync ##" >> $logfile
 }
-# ## ###
 # ## ###
 # action start
 # output log file path if watching terminal
@@ -198,11 +182,11 @@ echo "LOG: $syncLogFile"
 source $mgmtdir/.dap_details
 # python virtual env activation to enable the Instructure DAP client
 source $pyEnv/bin/activate
-
-# sync_tables_byfile "canvas" "$mgmtdir/dap_tables.txt" $syncLogFile
-# sync_tables_byfile "new_quizzes" "$mgmtdir/dap_tables_nq.txt" $syncLogFile
-sync_tables_bydblist "canvas" $mgmtdir $syncLogFile
-sync_tables_bydblist "new_quizzes" $mgmtdir $syncLogFile
+# sync the tables for each namespace in the configuration
+for ns in ${!NameSpaces[@]}
+do
+    sync_tables_bydblist ${NameSpaces[$ns]} $mgmtdir $syncLogFile
+done
 
 # deactivate python virtual env
 deactivate
